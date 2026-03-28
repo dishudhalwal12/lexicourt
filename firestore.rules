@@ -80,7 +80,7 @@ service cloud.firestore {
         request.resource.data.isActive == true
       ) || isAdmin();
 
-      allow read: if isAdmin() || (isActiveUser() && request.auth.uid == userId);
+      allow read: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
 
       allow update: if isAdmin() || (
         isActiveUser() &&

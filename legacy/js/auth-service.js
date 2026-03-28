@@ -68,9 +68,17 @@ export async function loginWithGoogle() {
     const result = await signInWithPopup(auth, googleProvider);
     const user = result.user;
     const userDocRef = doc(db, "users", user.uid);
-    const docSnap = await getDoc(userDocRef);
+    let docSnap = null;
 
-    if (!docSnap.exists()) {
+    try {
+      docSnap = await getDoc(userDocRef);
+    } catch (error) {
+      if (error?.code !== "permission-denied") {
+        throw error;
+      }
+    }
+
+    if (!docSnap || !docSnap.exists()) {
       await setDoc(userDocRef, {
         uid: user.uid,
         fullName: user.displayName || "Google User",

@@ -4,3 +4,4 @@ codex/
 .env.*
 node_modules/
 uploads/
+.next/
