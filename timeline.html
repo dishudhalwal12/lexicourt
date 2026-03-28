@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Case Timeline | LexiCourt</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -19,8 +20,203 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
     />
     <link rel="stylesheet" href="css/main.css" />
+    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module">
+      import { protectPage } from "./js/auth-guard.js";
+      import { initSharedUI } from "./js/page-init.js";
+      import {
+        getCasesForCurrentUser,
+        getDocumentsByCase,
+        getTimelineByCase,
+        saveTimeline,
+        getCaseIdFromUrl,
+        buildCaseUrl,
+        formatFirestoreDate
+      } from "./js/firestore-service.js";
+      import { generateTimelineFromApi } from "./js/api-client.js";
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function toIsoDate(value) {
+        if (!value) {
+          return null;
+        }
+        if (typeof value.toDate === "function") {
+          return value.toDate().toISOString();
+        }
+        const date = value instanceof Date ? value : new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date.toISOString();
+      }
+
+      function setCaseLinks(caseId) {
+        const links = {
+          timelineDocumentsLink: "case-detail.html",
+          timelineAssistantLink: "assistant.html",
+          timelineDraftsLink: "drafts.html"
+        };
+
+        Object.entries(links).forEach(([id, path]) => {
+          const link = document.getElementById(id);
+          if (link && caseId) {
+            link.href = buildCaseUrl(path, caseId);
+          }
+        });
+      }
+
+      function buildFallbackTimeline(selectedCase) {
+        const items = [];
+
+        if (selectedCase.createdAt) {
+          items.push({
+            date: formatFirestoreDate(selectedCase.createdAt),
+            title: "Case Record Created",
+            description: `${selectedCase.caseTitle} was registered in LexiCourt and assigned for ongoing preparation.`
+          });
+        }
+
+        if (selectedCase.nextHearingDate) {
+          items.push({
+            date: formatFirestoreDate(selectedCase.nextHearingDate),
+            title: "Next Hearing",
+            description: `Matter is presently listed before ${selectedCase.courtName || "the court"} on the next recorded date.`
+          });
+        }
+
+        return items;
+      }
+
+      function renderTimeline(events) {
+        const container = document.getElementById("timelineList");
+        if (!container) {
+          return;
+        }
+
+        if (!events.length) {
+          container.innerHTML = `
+            <div class="timeline-event">
+              <span class="timeline-date-pill">No events</span>
+              <article class="timeline-card">
+                <h4>Timeline not generated yet</h4>
+                <p class="body-copy">This matter does not have saved timeline events yet.</p>
+              </article>
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = events
+          .map(
+            (eventItem) => `
+              <div class="timeline-event">
+                <span class="timeline-date-pill">${escapeHtml(eventItem.date)}</span>
+                <article class="timeline-card">
+                  <h4>${escapeHtml(eventItem.title)}</h4>
+                  <p class="body-copy">${escapeHtml(eventItem.description)}</p>
+                </article>
+              </div>
+            `
+          )
+          .join("");
+      }
+
+      protectPage(["lawyer", "admin"], async (user, profile) => {
+        document.body.style.display = 'block';
+        initSharedUI();
+
+        try {
+          const cases = await getCasesForCurrentUser();
+          const caseSelect = document.getElementById("timelineCaseSelect");
+          const requestedCaseId = getCaseIdFromUrl();
+          const selectedCase = cases.find((item) => item.id === requestedCaseId) || cases[0];
+
+          if (!selectedCase) {
+            renderTimeline([]);
+            return;
+          }
+
+          if (caseSelect) {
+            caseSelect.innerHTML = cases
+              .map(
+                (item) =>
+                  `<option value="${item.id}" ${item.id === selectedCase.id ? "selected" : ""}>${escapeHtml(item.caseNumber || item.id)} • ${escapeHtml(item.caseTitle)}</option>`
+              )
+              .join("");
+          }
+
+          setCaseLinks(selectedCase.id);
+
+          let timelines = await getTimelineByCase(selectedCase.id);
+          if (!timelines.length) {
+            const documents = await getDocumentsByCase(selectedCase.id);
+
+            try {
+              const generated = await generateTimelineFromApi({
+                caseData: {
+                  id: selectedCase.id,
+                  caseId: selectedCase.caseId || selectedCase.id,
+                  caseNumber: selectedCase.caseNumber || selectedCase.caseId || selectedCase.id,
+                  caseTitle: selectedCase.caseTitle,
+                  matterType: selectedCase.matterType,
+                  courtName: selectedCase.courtName,
+                  status: selectedCase.status,
+                  createdAt: toIsoDate(selectedCase.createdAt),
+                  updatedAt: toIsoDate(selectedCase.updatedAt),
+                  nextHearingDate: toIsoDate(selectedCase.nextHearingDate)
+                },
+                documents: documents.map((doc) => ({
+                  id: doc.id,
+                  fileName: doc.fileName,
+                  displayTitle: doc.displayTitle,
+                  documentType: doc.documentType,
+                  extractedText: doc.extractedText || "",
+                  rawTextContent: doc.rawTextContent || ""
+                }))
+              });
+
+              if (generated.events?.length) {
+                await saveTimeline({
+                  caseId: selectedCase.id,
+                  sourceDocumentIds: documents.map((doc) => doc.id),
+                  events: generated.events,
+                  modelName: generated.mode === "gemini" ? "gemini" : "lexicourt-ml"
+                });
+                timelines = await getTimelineByCase(selectedCase.id);
+              }
+            } catch (error) {
+              console.error(error);
+            }
+          }
+
+          const events = timelines.length
+            ? timelines.flatMap((timeline) =>
+                (timeline.events || []).map((eventItem) => ({
+                  date: eventItem.date || formatFirestoreDate(timeline.generatedAt),
+                  title: eventItem.title || "Timeline Event",
+                  description: eventItem.description || "No description provided."
+                }))
+              )
+            : buildFallbackTimeline(selectedCase);
+
+          renderTimeline(events);
+
+          if (caseSelect) {
+            caseSelect.addEventListener("change", () => {
+              window.location.href = buildCaseUrl("timeline.html", caseSelect.value);
+            });
+          }
+        } catch(e) { console.error(e); }
+      });
+    </script>
+    <style>body { display: none; }</style>
   </head>
-  <body>
+  <body class="workspace-page">
     <main class="page-shell">
       <header class="topbar">
         <a href="dashboard.html" class="brand-wrap">
@@ -33,22 +229,25 @@
         <nav class="nav-cluster">
           <a class="nav-link-pill" href="dashboard.html"><i class="bi bi-grid"></i> Overview</a>
           <a class="nav-link-pill" href="cases.html"><i class="bi bi-briefcase"></i> Cases</a>
-          <a class="nav-link-pill" href="case-detail.html"><i class="bi bi-folder2-open"></i> Documents</a>
-          <a class="nav-link-pill" href="assistant.html"><i class="bi bi-stars"></i> AI Assistant</a>
-          <a class="nav-link-pill" href="drafts.html"><i class="bi bi-file-earmark-richtext"></i> Drafts</a>
-          <a class="nav-link-pill" href="#" onclick="lexiCourtUtils.comingSoon(event, 'Settings arrive in Phase 2.');"><i class="bi bi-gear"></i> Settings</a>
+          <a id="timelineDocumentsLink" class="nav-link-pill" href="case-detail.html"><i class="bi bi-folder2-open"></i> Documents</a>
+          <a id="timelineAssistantLink" class="nav-link-pill" href="assistant.html"><i class="bi bi-stars"></i> AI Assistant</a>
+          <a id="timelineDraftsLink" class="nav-link-pill" href="drafts.html"><i class="bi bi-file-earmark-richtext"></i> Drafts</a>
+          <a class="nav-link-pill" href="settings.html"><i class="bi bi-gear"></i> Settings</a>
         </nav>
         <div class="nav-actions">
-          <button class="icon-button" type="button" data-coming-soon="Notifications arrive in Phase 2.">
+          <button class="icon-button" type="button" data-notification-trigger="true">
             <i class="bi bi-bell"></i>
           </button>
           <a class="avatar-chip" href="client-dashboard.html">
-            <span class="avatar-photo">JS</span>
+            <span class="avatar-photo">U</span>
             <span class="avatar-copy">
-              <strong>Jaskirat</strong>
-              <span>Lawyer</span>
+              <strong id="navUserName">User Name</strong>
+              <span id="navUserRole">Role</span>
             </span>
           </a>
+          <button id="logoutBtn" class="btn btn-outline-danger btn-sm p-1 ms-2" type="button" style="border:none;" title="Logout">
+             <i class="bi bi-box-arrow-right"></i>
+          </button>
         </div>
       </header>
 
@@ -70,18 +269,5 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="js/data.js"></script>
-    <script>
-      document.addEventListener("DOMContentLoaded", () => {
-        const caseSelect = document.getElementById("timelineCaseSelect");
-        caseSelect.innerHTML = window.lexiCourtData.cases
-          .map(
-            (item, index) =>
-              `<option value="${item.caseId}" ${index === 0 ? "selected" : ""}>${item.caseId} • ${item.caseTitle}</option>`
-          )
-          .join("");
-
-        window.lexiCourtUtils.renderTimeline("timelineList", window.lexiCourtData.caseTimeline);
-      });
-    </script>
   </body>
 </html>

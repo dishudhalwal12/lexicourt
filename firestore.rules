@@ -1,0 +1,172 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function hasUserProfile() {
+      return isAuthenticated() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserRole() {
+      return hasUserProfile()
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+        : null;
+    }
+
+    function isActiveUser() {
+      return hasUserProfile() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true;
+    }
+
+    function isAdmin() {
+      return isActiveUser() && getUserRole() == 'admin';
+    }
+
+    function isLawyer() {
+      return isActiveUser() && getUserRole() == 'lawyer';
+    }
+
+    function isClient() {
+      return isActiveUser() && getUserRole() == 'client';
+    }
+
+    function shareDocId(caseId) {
+      return caseId + '_' + request.auth.uid;
+    }
+
+    function hasClientShare(caseId) {
+      return isClient() &&
+        exists(/databases/$(database)/documents/clientShares/$(shareDocId(caseId)));
+    }
+
+    function canReadCaseResource(caseId, data) {
+      return isAdmin() || (
+        isLawyer() && (
+          data.ownerUid == request.auth.uid ||
+          (data.assignedUserIds != null && request.auth.uid in data.assignedUserIds)
+        )
+      ) || hasClientShare(caseId);
+    }
+
+    function canReadCaseById(caseId) {
+      return exists(/databases/$(database)/documents/caseFolders/$(caseId)) &&
+        canReadCaseResource(
+          caseId,
+          get(/databases/$(database)/documents/caseFolders/$(caseId)).data
+        );
+    }
+
+    function canManageCaseById(caseId) {
+      return isAdmin() || (
+        isLawyer() &&
+        exists(/databases/$(database)/documents/caseFolders/$(caseId)) &&
+        get(/databases/$(database)/documents/caseFolders/$(caseId)).data.ownerUid == request.auth.uid
+      );
+    }
+
+    match /users/{userId} {
+      allow create: if (
+        isAuthenticated() &&
+        request.auth.uid == userId &&
+        request.resource.data.uid == userId &&
+        (
+          request.resource.data.role == 'lawyer' ||
+          request.resource.data.role == 'client'
+        ) &&
+        request.resource.data.isActive == true
+      ) || isAdmin();
+
+      allow read: if isAdmin() || (isActiveUser() && request.auth.uid == userId);
+
+      allow update: if isAdmin() || (
+        isActiveUser() &&
+        request.auth.uid == userId &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.email == resource.data.email
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    match /caseFolders/{caseId} {
+      allow create: if isAdmin() || (
+        isLawyer() &&
+        request.resource.data.ownerUid == request.auth.uid
+      );
+
+      allow read: if canReadCaseResource(caseId, resource.data);
+
+      allow update: if isAdmin() || (
+        isLawyer() &&
+        resource.data.ownerUid == request.auth.uid
+      );
+
+      allow delete: if isAdmin() || (
+        isLawyer() &&
+        resource.data.ownerUid == request.auth.uid
+      );
+    }
+
+    match /documents/{docId} {
+      allow create: if canManageCaseById(request.resource.data.caseId);
+      allow read: if canReadCaseById(resource.data.caseId);
+      allow update, delete: if canManageCaseById(resource.data.caseId);
+    }
+
+    match /aiChats/{chatId} {
+      allow create: if canManageCaseById(request.resource.data.caseId);
+      allow read: if canReadCaseById(resource.data.caseId) && !isClient();
+      allow update, delete: if isAdmin() || (
+        canManageCaseById(resource.data.caseId) &&
+        resource.data.userUid == request.auth.uid
+      );
+    }
+
+    match /summaries/{summaryId} {
+      allow create: if canManageCaseById(request.resource.data.caseId);
+      allow read: if canReadCaseById(resource.data.caseId);
+      allow update, delete: if canManageCaseById(resource.data.caseId);
+    }
+
+    match /timelines/{timelineId} {
+      allow create: if canManageCaseById(request.resource.data.caseId);
+      allow read: if canReadCaseById(resource.data.caseId);
+      allow update, delete: if canManageCaseById(resource.data.caseId);
+    }
+
+    match /drafts/{draftId} {
+      allow create: if canManageCaseById(request.resource.data.caseId);
+      allow read: if canReadCaseById(resource.data.caseId) && !isClient();
+      allow update, delete: if canManageCaseById(resource.data.caseId);
+    }
+
+    match /readinessChecks/{checkId} {
+      allow create: if canManageCaseById(request.resource.data.caseId);
+      allow read: if canReadCaseById(resource.data.caseId) && !isClient();
+      allow update, delete: if canManageCaseById(resource.data.caseId);
+    }
+
+    match /mlPredictions/{predictionId} {
+      allow create: if canManageCaseById(request.resource.data.caseId);
+      allow read: if canReadCaseById(resource.data.caseId);
+      allow update, delete: if canManageCaseById(resource.data.caseId);
+    }
+
+    match /clientShares/{shareId} {
+      allow create: if canManageCaseById(request.resource.data.caseId);
+      allow read: if isAdmin() || (
+        isActiveUser() && (
+          resource.data.clientUid == request.auth.uid ||
+          resource.data.sharedBy == request.auth.uid ||
+          canManageCaseById(resource.data.caseId)
+        )
+      );
+      allow update, delete: if canManageCaseById(resource.data.caseId);
+    }
+  }
+}

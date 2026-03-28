@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Client Dashboard | LexiCourt</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -19,8 +20,180 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
     />
     <link rel="stylesheet" href="css/main.css" />
+    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module">
+      import { protectPage } from "./js/auth-guard.js";
+      import { initSharedUI } from "./js/page-init.js";
+      import {
+        getClientSharedItems,
+        getCaseById,
+        getDocumentsByCase,
+        getTimelineByCase,
+        formatFirestoreDate
+      } from "./js/firestore-service.js";
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function renderEmptyClientState() {
+        document.getElementById("clientCaseTitle").textContent = "No shared matter yet";
+        document.getElementById("clientCaseStatus").innerHTML = `<span class="status-pill status-closed">Awaiting Share</span>`;
+        document.getElementById("clientNextHearing").textContent = "Next Hearing • Not shared yet";
+        document.getElementById("clientCaseSummary").textContent = "Your lawyer has not shared any case material with this account yet.";
+        document.getElementById("clientDocsList").innerHTML = `
+          <div class="doc-row">
+            <div>
+              <div class="list-title">No shared documents</div>
+              <div class="metric-label">Shared files will appear here once your counsel publishes them.</div>
+            </div>
+          </div>
+        `;
+        document.getElementById("clientTimeline").innerHTML = `
+          <div class="timeline-event">
+            <span class="timeline-date-pill">No updates</span>
+            <article class="timeline-card">
+              <h4>Timeline pending</h4>
+              <p class="body-copy">Hearing milestones will appear here after the matter is shared.</p>
+            </article>
+          </div>
+        `;
+      }
+
+      function renderStatusBadge(status) {
+        const classes = {
+          Active: "status-active",
+          Pending: "status-pending",
+          Closed: "status-closed",
+          Won: "status-won"
+        };
+        const normalizedStatus = status || "Pending";
+        return `<span class="status-pill ${classes[normalizedStatus] || "status-pending"}">${normalizedStatus}</span>`;
+      }
+
+      function renderClientDocuments(documents) {
+        const list = document.getElementById("clientDocsList");
+        if (!list) {
+          return;
+        }
+
+        if (!documents.length) {
+          list.innerHTML = `
+            <div class="doc-row">
+              <div>
+                <div class="list-title">No shared documents</div>
+                <div class="metric-label">There are no shared document records for this matter yet.</div>
+              </div>
+            </div>
+          `;
+          return;
+        }
+
+        list.innerHTML = documents
+          .map(
+            (doc) => `
+              <div class="doc-row">
+                <div>
+                  <div class="list-title">${escapeHtml(doc.displayTitle || doc.fileName || "Untitled document")}</div>
+                  <div class="metric-label">${escapeHtml(doc.documentType || "Shared document")}</div>
+                </div>
+                <span class="mini-pill">${escapeHtml(formatFirestoreDate(doc.uploadedAt))}</span>
+              </div>
+            `
+          )
+          .join("");
+      }
+
+      function renderClientTimeline(events) {
+        const container = document.getElementById("clientTimeline");
+        if (!container) {
+          return;
+        }
+
+        if (!events.length) {
+          container.innerHTML = `
+            <div class="timeline-event">
+              <span class="timeline-date-pill">No events</span>
+              <article class="timeline-card">
+                <h4>No timeline shared</h4>
+                <p class="body-copy">Your legal team has not shared timeline milestones for this matter yet.</p>
+              </article>
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = events
+          .map(
+            (eventItem) => `
+              <div class="timeline-event">
+                <span class="timeline-date-pill">${escapeHtml(eventItem.date)}</span>
+                <article class="timeline-card">
+                  <h4>${escapeHtml(eventItem.title)}</h4>
+                  <p class="body-copy">${escapeHtml(eventItem.description)}</p>
+                </article>
+              </div>
+            `
+          )
+          .join("");
+      }
+
+      protectPage(["client"], async (user, profile) => {
+        document.body.style.display = 'block';
+        initSharedUI();
+
+        try {
+          const shares = await getClientSharedItems(user.uid);
+          const activeShare = shares[0];
+
+          if (!activeShare) {
+            renderEmptyClientState();
+            return;
+          }
+
+          const activeCase = await getCaseById(activeShare.caseId);
+          const documents = await getDocumentsByCase(activeShare.caseId);
+          const timelines = await getTimelineByCase(activeShare.caseId);
+
+          const sharedDocuments = Array.isArray(activeShare.sharedDocumentIds) && activeShare.sharedDocumentIds.length
+            ? documents.filter((doc) => activeShare.sharedDocumentIds.includes(doc.id))
+            : [];
+
+          const sharedTimelines = Array.isArray(activeShare.sharedTimelineIds) && activeShare.sharedTimelineIds.length
+            ? timelines.filter((timeline) => activeShare.sharedTimelineIds.includes(timeline.id))
+            : [];
+
+          const timelineEvents = sharedTimelines.flatMap((timeline) =>
+            (timeline.events || []).map((eventItem) => ({
+              date: eventItem.date || formatFirestoreDate(timeline.generatedAt),
+              title: eventItem.title || "Timeline Event",
+              description: eventItem.description || "No description provided."
+            }))
+          );
+
+          document.getElementById("clientCaseTitle").textContent = activeCase?.caseTitle || "Shared matter";
+          document.getElementById("clientCaseStatus").innerHTML = renderStatusBadge(activeCase?.status);
+          document.getElementById("clientNextHearing").textContent = `Next Hearing • ${formatFirestoreDate(activeCase?.nextHearingDate, "Not scheduled")}`;
+          document.getElementById("clientCaseSummary").textContent =
+            activeCase?.notes ||
+            `${activeCase?.caseTitle || "This matter"} has been shared with you for document and hearing visibility.`;
+
+          renderClientDocuments(sharedDocuments);
+          renderClientTimeline(timelineEvents);
+        } catch (error) {
+          console.error(error);
+          renderEmptyClientState();
+        }
+      });
+    </script>
+    <style>body { display: none; }</style>
   </head>
-  <body>
+  <body class="workspace-page">
     <main class="page-shell">
       <header class="topbar">
         <a href="client-dashboard.html" class="brand-wrap">
@@ -32,20 +205,23 @@
         </a>
         <nav class="nav-cluster">
           <a class="nav-link-pill active" href="client-dashboard.html"><i class="bi bi-grid"></i> Overview</a>
-          <a class="nav-link-pill" href="case-detail.html"><i class="bi bi-folder2-open"></i> Shared Documents</a>
-          <a class="nav-link-pill" href="timeline.html"><i class="bi bi-clock-history"></i> Timeline</a>
+          <a class="nav-link-pill" href="#shared-documents"><i class="bi bi-folder2-open"></i> Shared Documents</a>
+          <a class="nav-link-pill" href="#hearing-timeline"><i class="bi bi-clock-history"></i> Timeline</a>
         </nav>
         <div class="nav-actions">
-          <button class="icon-button" type="button" data-coming-soon="Notifications arrive in Phase 2.">
+          <button class="icon-button" type="button" data-notification-trigger="true">
             <i class="bi bi-bell"></i>
           </button>
           <a class="avatar-chip" href="dashboard.html">
-            <span class="avatar-photo">RS</span>
+            <span class="avatar-photo">U</span>
             <span class="avatar-copy">
-              <strong>Rohit</strong>
-              <span>Client</span>
+              <strong id="navUserName">User Name</strong>
+              <span id="navUserRole">Role</span>
             </span>
           </a>
+          <button id="logoutBtn" class="btn btn-outline-danger btn-sm p-1 ms-2" type="button" style="border:none;" title="Logout">
+             <i class="bi bi-box-arrow-right"></i>
+          </button>
         </div>
       </header>
 
@@ -66,18 +242,17 @@
               <h2 class="card-title">Case Status</h2>
             </div>
           </div>
-          <p class="metric-big" style="font-size: 28px;">Sharma vs State of Delhi</p>
+          <p id="clientCaseTitle" class="metric-big" style="font-size: 28px;">Loading shared matter...</p>
           <div class="detail-tabs" style="margin: 18px 0 12px;">
-            <span class="status-pill status-active">Active</span>
-            <span class="mini-pill">Next Hearing • 15 Apr 2026</span>
+            <span id="clientCaseStatus"><span class="status-pill status-closed">Loading</span></span>
+            <span id="clientNextHearing" class="mini-pill">Next Hearing • Loading</span>
           </div>
-          <p class="body-copy">
-            Counsel has updated the file with the last court order, bail application, and current
-            hearing notes. The matter is scheduled for arguments on the next listed date.
+          <p id="clientCaseSummary" class="body-copy">
+            Fetching the shared case summary, documents, and hearing visibility for this client workspace.
           </p>
         </article>
 
-        <article class="panel-card">
+        <article id="shared-documents" class="panel-card">
           <div class="card-head">
             <div class="card-title-wrap">
               <span class="card-icon"><i class="bi bi-folder-check"></i></span>
@@ -88,7 +263,7 @@
         </article>
       </section>
 
-      <section class="panel-card" style="margin-top: 24px;">
+      <section id="hearing-timeline" class="panel-card" style="margin-top: 24px;">
         <div class="card-head">
           <div class="card-title-wrap">
             <span class="card-icon"><i class="bi bi-clock-history"></i></span>
@@ -101,11 +276,5 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="js/data.js"></script>
-    <script>
-      document.addEventListener("DOMContentLoaded", () => {
-        window.lexiCourtUtils.renderClientDocuments("clientDocsList");
-        window.lexiCourtUtils.renderTimeline("clientTimeline", window.lexiCourtData.clientHearings);
-      });
-    </script>
   </body>
 </html>

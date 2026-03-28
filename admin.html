@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Admin Dashboard | LexiCourt</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -19,8 +20,310 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
     />
     <link rel="stylesheet" href="css/main.css" />
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module">
+      import { protectPage } from "./js/auth-guard.js";
+      import { initSharedUI } from "./js/page-init.js";
+      import { getAdminUsersList, getAllCasesAdmin, formatFirestoreDate } from "./js/firestore-service.js";
+      import { downloadTextPdf } from "./js/pdf-export.js";
+
+      let adminUsersCache = [];
+      let adminCasesCache = [];
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function setMetric(id, value) {
+        const element = document.getElementById(id);
+        if (element) {
+          element.textContent = value;
+        }
+      }
+
+      function renderStatusBadge(status) {
+        const classes = {
+          Active: "status-active",
+          Pending: "status-pending",
+          Closed: "status-closed",
+          Won: "status-won"
+        };
+        const normalizedStatus = status || "Closed";
+        return `<span class="status-pill ${classes[normalizedStatus] || "status-closed"}">${normalizedStatus}</span>`;
+      }
+
+      function renderFlaggedFolders(cases) {
+        const container = document.getElementById("flaggedFoldersList");
+        if (!container) {
+          return;
+        }
+
+        const flaggedCases = cases
+          .filter((item) => item.status === "Pending" || !item.nextHearingDate)
+          .slice(0, 3);
+
+        if (!flaggedCases.length) {
+          container.innerHTML = `
+            <div class="doc-row">
+              <div>
+                <div class="list-title">No flagged folders</div>
+                <div class="metric-label">All tracked matters currently have basic metadata and next steps.</div>
+              </div>
+              <span class="status-pill status-active">Clear</span>
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = flaggedCases
+          .map(
+            (item) => `
+              <div class="doc-row">
+                <div>
+                  <div class="list-title">${escapeHtml(item.caseNumber || item.id)} • ${escapeHtml(item.caseTitle)}</div>
+                  <div class="metric-label">${item.status === "Pending" ? "Matter still pending review or movement." : "Next hearing date should be updated for this file."}</div>
+                </div>
+                <span class="status-pill ${item.status === "Pending" ? "status-pending" : "status-closed"}">${item.status === "Pending" ? "Medium" : "Review"}</span>
+              </div>
+            `
+          )
+          .join("");
+      }
+
+      function renderUsers(users, cases) {
+        const table = document.getElementById("adminUsersTable");
+        if (!table) {
+          return;
+        }
+
+        if (!users.length) {
+          table.innerHTML = `
+            <tr>
+              <td colspan="5" class="metric-label">No user profiles found in Firestore yet.</td>
+            </tr>
+          `;
+          return;
+        }
+
+        table.innerHTML = users
+          .map((item) => {
+            const linkedCases = cases.filter(
+              (caseItem) =>
+                caseItem.ownerUid === item.id ||
+                (Array.isArray(caseItem.assignedUserIds) && caseItem.assignedUserIds.includes(item.id)) ||
+                caseItem.clientId === item.id
+            ).length;
+            const statusText = item.isActive ? "Active" : "Closed";
+
+            return `
+              <tr>
+                <td><span class="table-case-title">${escapeHtml(item.fullName || item.email || "Unknown User")}</span></td>
+                <td><span class="role-tag">${escapeHtml((item.role || "client").toUpperCase())}</span></td>
+                <td>${linkedCases}</td>
+                <td>${renderStatusBadge(statusText)}</td>
+                <td>
+                  <div class="action-group">
+                    <button class="action-chip" type="button" data-user-action="snapshot" data-user-id="${escapeHtml(item.id)}">
+                      <i class="bi bi-pencil-square"></i>
+                    </button>
+                    <button class="action-chip" type="button" data-user-action="activity" data-user-id="${escapeHtml(item.id)}">
+                      <i class="bi bi-three-dots"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            `;
+          })
+          .join("");
+      }
+
+      function buildRecentCaseTrend(cases) {
+        const trend = [0, 0, 0, 0, 0, 0];
+        const now = new Date();
+
+        cases.forEach((item) => {
+          const rawDate = item.createdAt;
+          const date = typeof rawDate?.toDate === "function" ? rawDate.toDate() : rawDate instanceof Date ? rawDate : null;
+          if (!date || Number.isNaN(date.getTime())) {
+            return;
+          }
+
+          const monthDelta = (now.getFullYear() - date.getFullYear()) * 12 + (now.getMonth() - date.getMonth());
+          if (monthDelta >= 0 && monthDelta < 6) {
+            trend[5 - monthDelta] += 1;
+          }
+        });
+
+        return trend;
+      }
+
+      function buildActiveLawyerTrend(users) {
+        const activeLawyers = users.filter((item) => item.role === "lawyer" && item.isActive).length;
+        return [0.72, 0.78, 0.84, 0.92, 0.96, 1].map((multiplier) => Math.max(0, Math.round(activeLawyers * multiplier)));
+      }
+
+      function buildAdminReportText(users, cases) {
+        const lawyers = users.filter((item) => item.role === "lawyer");
+        const activeLawyers = lawyers.filter((item) => item.isActive);
+        const pendingCases = cases.filter((item) => item.status === "Pending");
+        const activeHearings = cases.filter((item) => item.nextHearingDate);
+
+        return [
+          "LexiCourt Admin Report",
+          `Generated: ${new Date().toLocaleString("en-IN")}`,
+          `Total users: ${users.length}`,
+          `Active lawyers: ${activeLawyers.length}`,
+          `Total matters: ${cases.length}`,
+          `Pending matters: ${pendingCases.length}`,
+          `Matters with hearing dates: ${activeHearings.length}`,
+          "",
+          "Flagged matters:",
+          ...(pendingCases.slice(0, 10).map((item, index) => `${index + 1}. ${item.caseTitle || "Untitled matter"} • ${item.caseNumber || item.id} • ${item.courtName || "Court"} • ${formatFirestoreDate(item.nextHearingDate, "No hearing date")}`) || ["No flagged matters currently visible."]),
+          "",
+          "Recent users:",
+          ...(users.slice(0, 10).map((item, index) => `${index + 1}. ${item.fullName || item.email || "Unknown User"} • ${(item.role || "client").toUpperCase()} • ${item.isActive ? "Active" : "Inactive"}`) || ["No users found."])
+        ].join("\n");
+      }
+
+      function downloadAdminReport() {
+        const reportText = buildAdminReportText(adminUsersCache, adminCasesCache);
+        downloadTextPdf({
+          filename: `lexicourt-admin-report-${new Date().toISOString().slice(0, 10)}.pdf`,
+          title: "LexiCourt Admin Report",
+          subtitle: `Generated ${new Date().toLocaleString("en-IN")}`,
+          body: reportText
+        });
+      }
+
+      function fillUserModal(userId, mode) {
+        const user = adminUsersCache.find((item) => item.id === userId);
+        const body = document.getElementById("adminUserModalBody");
+        const title = document.getElementById("adminUserModalTitle");
+        if (!user || !body || !title) {
+          return;
+        }
+
+        const linkedCases = adminCasesCache.filter(
+          (caseItem) =>
+            caseItem.ownerUid === user.id ||
+            (Array.isArray(caseItem.assignedUserIds) && caseItem.assignedUserIds.includes(user.id)) ||
+            caseItem.clientId === user.id
+        );
+
+        title.textContent = mode === "activity" ? "User Activity" : "User Snapshot";
+        body.innerHTML = mode === "activity"
+          ? `
+              <div class="stack-md">
+                <div class="doc-row">
+                  <div>
+                    <div class="list-title">${escapeHtml(user.fullName || user.email || "Unknown User")}</div>
+                    <div class="metric-label">${escapeHtml((user.role || "client").toUpperCase())} • ${user.isActive ? "Active workspace" : "Inactive workspace"}</div>
+                  </div>
+                  <span class="mini-pill">${linkedCases.length} linked case${linkedCases.length === 1 ? "" : "s"}</span>
+                </div>
+                <div class="metric-label">Recent matter visibility</div>
+                <div class="notification-feed">
+                  ${linkedCases.slice(0, 5).map((caseItem) => `
+                    <article class="notification-item compact">
+                      <span class="notification-severity notification-severity-info">${escapeHtml(caseItem.status || "Case")}</span>
+                      <div class="notification-body">
+                        <strong>${escapeHtml(caseItem.caseTitle || "Untitled matter")}</strong>
+                        <p>${escapeHtml(caseItem.courtName || "Court")} • Next hearing ${escapeHtml(formatFirestoreDate(caseItem.nextHearingDate, "Not scheduled"))}</p>
+                      </div>
+                    </article>
+                  `).join("") || `<div class="metric-label">No linked cases yet for this user.</div>`}
+                </div>
+              </div>
+            `
+          : `
+              <div class="stack-md">
+                <div class="doc-row">
+                  <div>
+                    <div class="list-title">${escapeHtml(user.fullName || "Unknown User")}</div>
+                    <div class="metric-label">${escapeHtml(user.email || "No email on record")}</div>
+                  </div>
+                  <span class="mini-pill">${escapeHtml((user.role || "client").toUpperCase())}</span>
+                </div>
+                <div class="summary-grid">
+                  <div class="summary-metric">
+                    <span class="metric-label">Workspace status</span>
+                    <strong>${user.isActive ? "Active" : "Inactive"}</strong>
+                  </div>
+                  <div class="summary-metric">
+                    <span class="metric-label">Linked cases</span>
+                    <strong>${linkedCases.length}</strong>
+                  </div>
+                  <div class="summary-metric">
+                    <span class="metric-label">Practice</span>
+                    <strong>${escapeHtml(user.practiceName || "Not set")}</strong>
+                  </div>
+                </div>
+                <div class="metric-label">Phone: ${escapeHtml(user.phone || "Not added")}</div>
+              </div>
+            `;
+
+        const modalElement = document.getElementById("adminUserModal");
+        const modal = window.bootstrap?.Modal ? window.bootstrap.Modal.getOrCreateInstance(modalElement) : null;
+        modal?.show();
+      }
+
+      function bindAdminActions() {
+        document.getElementById("adminGenerateReportBtn")?.addEventListener("click", downloadAdminReport);
+
+        document.getElementById("adminUsersTable")?.addEventListener("click", (event) => {
+          const button = event.target.closest("[data-user-action]");
+          if (!button) {
+            return;
+          }
+
+          fillUserModal(button.dataset.userId, button.dataset.userAction);
+        });
+      }
+
+      protectPage(["admin"], async (user, profile) => {
+        document.body.style.display = 'block';
+        initSharedUI();
+        bindAdminActions();
+
+        try {
+          const [users, cases] = await Promise.all([
+            getAdminUsersList(),
+            getAllCasesAdmin()
+          ]);
+          adminUsersCache = users;
+          adminCasesCache = cases;
+
+          const activeLawyers = users.filter((item) => item.role === "lawyer" && item.isActive).length;
+          const flaggedFolders = cases.filter((item) => item.status === "Pending" || !item.nextHearingDate).length;
+          const recentCases = cases.filter((item) => item.createdAt && typeof item.createdAt.toDate === "function").length;
+
+          setMetric("adminTotalUsers", users.length);
+          setMetric("adminTotalCases", cases.length);
+          setMetric("adminActiveLawyers", activeLawyers);
+          setMetric("adminFlaggedFolders", flaggedFolders);
+          setMetric("adminCaseIntakeValue", recentCases);
+          setMetric("adminActiveLawyersValue", activeLawyers);
+
+          renderFlaggedFolders(cases);
+          renderUsers(users, cases);
+          window.lexiCourtCharts?.initAdminCharts({
+            caseIntakeTrend: buildRecentCaseTrend(cases),
+            activeLawyersTrend: buildActiveLawyerTrend(users)
+          });
+        } catch (error) {
+          console.error(error);
+        }
+      });
+    </script>
+    <style>body { display: none; }</style>
   </head>
-  <body data-page="admin">
+  <body class="workspace-page" data-page="admin">
     <main class="page-shell">
       <header class="topbar">
         <a href="admin.html" class="brand-wrap">
@@ -36,19 +339,22 @@
           <a class="nav-link-pill" href="case-detail.html"><i class="bi bi-folder2-open"></i> Documents</a>
           <a class="nav-link-pill" href="assistant.html"><i class="bi bi-stars"></i> AI Assistant</a>
           <a class="nav-link-pill" href="drafts.html"><i class="bi bi-file-earmark-richtext"></i> Drafts</a>
-          <a class="nav-link-pill" href="#" onclick="lexiCourtUtils.comingSoon(event, 'Settings arrive in Phase 2.');"><i class="bi bi-gear"></i> Settings</a>
+          <a class="nav-link-pill" href="settings.html"><i class="bi bi-gear"></i> Settings</a>
         </nav>
         <div class="nav-actions">
-          <button class="icon-button" type="button" data-coming-soon="Notifications arrive in Phase 2.">
+          <button class="icon-button" type="button" data-notification-trigger="true">
             <i class="bi bi-bell"></i>
           </button>
           <a class="avatar-chip" href="dashboard.html">
-            <span class="avatar-photo">ST</span>
+            <span class="avatar-photo">U</span>
             <span class="avatar-copy">
-              <strong>Sarthak</strong>
-              <span>Admin</span>
+              <strong id="navUserName">User Name</strong>
+              <span id="navUserRole">Role</span>
             </span>
           </a>
+          <button id="logoutBtn" class="btn btn-outline-danger btn-sm p-1 ms-2" type="button" style="border:none;" title="Logout">
+             <i class="bi bi-box-arrow-right"></i>
+          </button>
         </div>
       </header>
 
@@ -61,29 +367,29 @@
         </div>
         <div class="header-tools">
           <span class="date-pill"><i class="bi bi-calendar3"></i> 01 Jan 2026 — 31 Dec 2026</span>
-          <button class="btn-dark" type="button" data-coming-soon="Admin exports arrive in Phase 2.">Generate Report</button>
+          <button id="adminGenerateReportBtn" class="btn-dark" type="button">Generate Report</button>
         </div>
       </section>
 
       <section class="mini-metrics-grid mb-4">
         <article class="panel-card stat-card">
           <span class="metric-label">Total Users</span>
-          <p class="metric-big">12</p>
+          <p id="adminTotalUsers" class="metric-big">0</p>
           <div class="progress-track"><div class="progress-fill" style="width: 72%;"></div></div>
         </article>
         <article class="panel-card stat-card">
           <span class="metric-label">Total Cases</span>
-          <p class="metric-big">87</p>
+          <p id="adminTotalCases" class="metric-big">0</p>
           <div class="progress-track"><div class="progress-fill" style="width: 81%;"></div></div>
         </article>
         <article class="panel-card stat-card">
           <span class="metric-label">Active Lawyers</span>
-          <p class="metric-big">8</p>
+          <p id="adminActiveLawyers" class="metric-big">0</p>
           <div class="progress-track"><div class="progress-fill" style="width: 66%;"></div></div>
         </article>
         <article class="panel-card stat-card">
           <span class="metric-label">Flagged Folders</span>
-          <p class="metric-big">3</p>
+          <p id="adminFlaggedFolders" class="metric-big">0</p>
           <div class="progress-track"><div class="progress-fill" style="width: 28%;"></div></div>
         </article>
       </section>
@@ -97,7 +403,7 @@
             </div>
             <span class="expand-chip"><i class="bi bi-arrow-up-right"></i></span>
           </div>
-          <p class="metric-big">18</p>
+          <p id="adminCaseIntakeValue" class="metric-big">0</p>
           <span class="metric-label">New matters added in the latest six-month view</span>
           <div class="chart-wrap"><canvas id="adminCasesChart"></canvas></div>
         </article>
@@ -110,7 +416,7 @@
             </div>
             <span class="expand-chip"><i class="bi bi-arrow-up-right"></i></span>
           </div>
-          <p class="metric-big">8</p>
+          <p id="adminActiveLawyersValue" class="metric-big">0</p>
           <span class="metric-label">Team utilization remains strong through Q2</span>
           <div class="chart-wrap"><canvas id="adminUsersChart"></canvas></div>
         </article>
@@ -123,7 +429,7 @@
             </div>
             <span class="expand-chip"><i class="bi bi-arrow-up-right"></i></span>
           </div>
-          <div class="stack-md">
+          <div id="flaggedFoldersList" class="stack-md">
             <div class="doc-row">
               <div>
                 <div class="list-title">CAS-005 • Joshi Land Acquisition</div>
@@ -171,16 +477,26 @@
           </table>
         </div>
       </section>
+
+      <div class="modal fade" id="adminUserModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content workspace-modal-shell">
+            <div class="modal-header">
+              <div>
+                <div class="document-modal-kicker">Admin Tools</div>
+                <h2 id="adminUserModalTitle" class="modal-title">User Snapshot</h2>
+              </div>
+              <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="adminUserModalBody" class="modal-body"></div>
+          </div>
+        </div>
+      </div>
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="js/data.js"></script>
     <script src="js/charts.js"></script>
-    <script>
-      document.addEventListener("DOMContentLoaded", () => {
-        window.lexiCourtUtils.renderUserTable("adminUsersTable");
-      });
-    </script>
   </body>
 </html>

@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Assistant | LexiCourt</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -19,8 +20,256 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
     />
     <link rel="stylesheet" href="css/main.css" />
+    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module">
+      import { protectPage } from "./js/auth-guard.js";
+      import { initSharedUI } from "./js/page-init.js";
+      import {
+        getCasesForCurrentUser,
+        getDocumentsByCase,
+        getAiChatsByCase,
+        saveAiChat,
+        getCaseIdFromUrl,
+        buildCaseUrl
+      } from "./js/firestore-service.js";
+      import { chatWithAssistant } from "./js/api-client.js";
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function toIsoDate(value) {
+        if (!value) {
+          return null;
+        }
+        if (typeof value.toDate === "function") {
+          return value.toDate().toISOString();
+        }
+        const date = value instanceof Date ? value : new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date.toISOString();
+      }
+
+      function setCaseLinks(caseId) {
+        const links = {
+          assistantDocumentsLink: "case-detail.html",
+          assistantDraftsLink: "drafts.html"
+        };
+
+        Object.entries(links).forEach(([id, path]) => {
+          const link = document.getElementById(id);
+          if (link && caseId) {
+            link.href = buildCaseUrl(path, caseId);
+          }
+        });
+      }
+
+      function renderDocumentOptions(documents) {
+        const select = document.getElementById("assistantDocumentSelect");
+        if (!select) {
+          return;
+        }
+
+        if (!documents.length) {
+          select.innerHTML = `<option value="">No documents available</option>`;
+          return;
+        }
+
+        select.innerHTML = [
+          `<option value="">All case documents</option>`,
+          ...documents.map(
+            (doc) =>
+              `<option value="${doc.id}">${escapeHtml(doc.displayTitle || doc.fileName || "Untitled document")}</option>`
+          )
+        ].join("");
+      }
+
+      function renderChatLog(messages, selectedCase, selectedDocument) {
+        const log = document.getElementById("assistantChatLog");
+        if (!log) {
+          return;
+        }
+
+        if (!messages.length) {
+          log.innerHTML = `
+            <div class="chat-bubble ai">
+              Ask about ${escapeHtml(selectedCase.caseTitle)}. ${selectedDocument ? `The selected document is ${escapeHtml(selectedDocument.displayTitle || selectedDocument.fileName)}.` : "You can query the full case file."}
+            </div>
+          `;
+          return;
+        }
+
+        log.innerHTML = messages
+          .flatMap(
+            (item) => [
+              `<div class="chat-bubble user">${escapeHtml(item.question)}</div>`,
+              `<div class="chat-bubble ai">${escapeHtml(item.answer).replaceAll("\n", "<br />")}</div>`
+            ]
+          )
+          .join("");
+
+        log.scrollTop = log.scrollHeight;
+      }
+
+      function buildCasePayload(selectedCase, documents, currentChats) {
+        return {
+          caseData: {
+            id: selectedCase.id,
+            caseId: selectedCase.caseId || selectedCase.id,
+            caseNumber: selectedCase.caseNumber || selectedCase.caseId || selectedCase.id,
+            caseTitle: selectedCase.caseTitle,
+            matterType: selectedCase.matterType,
+            courtName: selectedCase.courtName,
+            status: selectedCase.status,
+            createdAt: toIsoDate(selectedCase.createdAt),
+            updatedAt: toIsoDate(selectedCase.updatedAt),
+            nextHearingDate: toIsoDate(selectedCase.nextHearingDate)
+          },
+          documents: documents.map((doc) => ({
+            id: doc.id,
+            fileName: doc.fileName,
+            displayTitle: doc.displayTitle,
+            documentType: doc.documentType,
+            extractedText: doc.extractedText || "",
+            rawTextContent: doc.rawTextContent || ""
+          })),
+          history: currentChats
+        };
+      }
+
+      protectPage(["lawyer", "admin"], async (user, profile) => {
+        document.body.style.display = 'block';
+        initSharedUI();
+
+        try {
+          const cases = await getCasesForCurrentUser();
+          const caseSelect = document.getElementById("assistantCaseSelect");
+          const input = document.getElementById("assistantInput");
+          const sendBtn = document.getElementById("assistantSendBtn");
+          const requestedCaseId = getCaseIdFromUrl();
+          const selectedCase = cases.find((item) => item.id === requestedCaseId) || cases[0];
+
+          if (!selectedCase) {
+            renderChatLog([], { caseTitle: "your matter" }, null);
+            return;
+          }
+
+          if (caseSelect) {
+            caseSelect.innerHTML = cases
+              .map(
+                (item) =>
+                  `<option value="${item.id}" ${item.id === selectedCase.id ? "selected" : ""}>${escapeHtml(item.caseNumber || item.id)} • ${escapeHtml(item.caseTitle)}</option>`
+              )
+              .join("");
+          }
+
+          setCaseLinks(selectedCase.id);
+
+          const documents = await getDocumentsByCase(selectedCase.id);
+          renderDocumentOptions(documents);
+
+          let currentChats = await getAiChatsByCase(selectedCase.id);
+          renderChatLog(currentChats, selectedCase, null);
+
+          if (caseSelect) {
+            caseSelect.addEventListener("change", () => {
+              window.location.href = buildCaseUrl("assistant.html", caseSelect.value);
+            });
+          }
+
+          const documentSelect = document.getElementById("assistantDocumentSelect");
+          if (documentSelect) {
+            documentSelect.addEventListener("change", () => {
+              const activeDocument = documents.find((doc) => doc.id === documentSelect.value) || null;
+              renderChatLog(currentChats, selectedCase, activeDocument);
+            });
+          }
+
+          document.querySelectorAll("[data-prompt]").forEach((button) => {
+            button.addEventListener("click", () => {
+              if (input) {
+                input.value = button.dataset.prompt || "";
+                input.focus();
+              }
+            });
+          });
+
+          if (sendBtn && input) {
+            sendBtn.addEventListener("click", async () => {
+              const question = input.value.trim();
+              if (!question) {
+                return;
+              }
+
+              const selectedDocument =
+                documents.find((doc) => doc.id === documentSelect?.value) || null;
+
+              sendBtn.disabled = true;
+              sendBtn.innerHTML = `<i class="bi bi-hourglass-split"></i> Thinking`;
+
+              try {
+                const response = await chatWithAssistant({
+                  ...buildCasePayload(selectedCase, documents, currentChats),
+                  question,
+                  selectedDocumentId: selectedDocument?.id || null
+                });
+
+                const answer = [
+                  response.answer,
+                  response.references?.length
+                    ? `\n\nRelevant references:\n${response.references
+                        .slice(0, 3)
+                        .map((item) => `- ${item.source}: ${item.answer}`)
+                        .join("\n")}`
+                    : "",
+                  response.recommendedActions?.length
+                    ? `\n\nRecommended next actions:\n${response.recommendedActions
+                        .slice(0, 3)
+                        .map((item) => `- ${item}`)
+                        .join("\n")}`
+                    : ""
+                ].join("");
+
+                await saveAiChat({
+                  caseId: selectedCase.id,
+                  question,
+                  answer,
+                  sourceDocumentIds: selectedDocument ? [selectedDocument.id] : [],
+                  responseType: "query",
+                  modelName: response.mode === "gemini" ? "gemini-2.5-flash" : "LexiCourt Preview"
+                });
+
+                input.value = "";
+                currentChats = await getAiChatsByCase(selectedCase.id);
+                renderChatLog(currentChats, selectedCase, selectedDocument);
+              } catch (error) {
+                console.error(error);
+                alert("Unable to generate the assistant reply right now. Please check the API server and try again.");
+              } finally {
+                sendBtn.disabled = false;
+                sendBtn.innerHTML = `<i class="bi bi-send-fill"></i> Send`;
+              }
+            });
+          }
+
+          if (input) {
+            input.addEventListener("keydown", (event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                sendBtn?.click();
+              }
+            });
+          }
+        } catch(e) { console.error(e); }
+      });
+    </script>
+    <style>body { display: none; }</style>
   </head>
-  <body>
+  <body class="workspace-page">
     <main class="page-shell">
       <header class="topbar">
         <a href="dashboard.html" class="brand-wrap">
@@ -33,22 +282,25 @@
         <nav class="nav-cluster">
           <a class="nav-link-pill" href="dashboard.html"><i class="bi bi-grid"></i> Overview</a>
           <a class="nav-link-pill" href="cases.html"><i class="bi bi-briefcase"></i> Cases</a>
-          <a class="nav-link-pill" href="case-detail.html"><i class="bi bi-folder2-open"></i> Documents</a>
+          <a id="assistantDocumentsLink" class="nav-link-pill" href="case-detail.html"><i class="bi bi-folder2-open"></i> Documents</a>
           <a class="nav-link-pill active" href="assistant.html"><i class="bi bi-stars"></i> AI Assistant</a>
-          <a class="nav-link-pill" href="drafts.html"><i class="bi bi-file-earmark-richtext"></i> Drafts</a>
-          <a class="nav-link-pill" href="#" onclick="lexiCourtUtils.comingSoon(event, 'Settings arrive in Phase 2.');"><i class="bi bi-gear"></i> Settings</a>
+          <a id="assistantDraftsLink" class="nav-link-pill" href="drafts.html"><i class="bi bi-file-earmark-richtext"></i> Drafts</a>
+          <a class="nav-link-pill" href="settings.html"><i class="bi bi-gear"></i> Settings</a>
         </nav>
         <div class="nav-actions">
-          <button class="icon-button" type="button" data-coming-soon="Notifications arrive in Phase 2.">
+          <button class="icon-button" type="button" data-notification-trigger="true">
             <i class="bi bi-bell"></i>
           </button>
           <a class="avatar-chip" href="client-dashboard.html">
-            <span class="avatar-photo">JS</span>
+            <span class="avatar-photo">U</span>
             <span class="avatar-copy">
-              <strong>Jaskirat</strong>
-              <span>Lawyer</span>
+              <strong id="navUserName">User Name</strong>
+              <span id="navUserRole">Role</span>
             </span>
           </a>
+          <button id="logoutBtn" class="btn btn-outline-danger btn-sm p-1 ms-2" type="button" style="border:none;" title="Logout">
+             <i class="bi bi-box-arrow-right"></i>
+          </button>
         </div>
       </header>
 
@@ -74,13 +326,13 @@
           <div class="panel-card" style="padding: 18px;">
             <span class="section-label">Suggested prompts</span>
             <div class="stack-md">
-              <button class="btn-dark w-100 justify-content-start" type="button" data-coming-soon="Contextual prompts arrive in Phase 2.">
+              <button class="btn-dark w-100 justify-content-start" type="button" data-prompt="What was the last order passed?">
                 What was the last order passed?
               </button>
-              <button class="btn-dark w-100 justify-content-start" type="button" data-coming-soon="Contextual prompts arrive in Phase 2.">
+              <button class="btn-dark w-100 justify-content-start" type="button" data-prompt="Summarize the prosecution response.">
                 Summarize the prosecution response.
               </button>
-              <button class="btn-dark w-100 justify-content-start" type="button" data-coming-soon="Contextual prompts arrive in Phase 2.">
+              <button class="btn-dark w-100 justify-content-start" type="button" data-prompt="List key hearing dates from the file.">
                 List key hearing dates from the file.
               </button>
             </div>
@@ -97,8 +349,8 @@
             </div>
             <div id="assistantChatLog" class="chat-log"></div>
             <div class="chat-input-row">
-              <input class="app-input" type="text" placeholder="Ask about the selected case file" />
-              <button class="btn-accent" type="button" data-coming-soon="Live AI replies arrive in Phase 2.">
+              <input id="assistantInput" class="app-input" type="text" placeholder="Ask about the selected case file" />
+              <button id="assistantSendBtn" class="btn-accent" type="button">
                 <i class="bi bi-send-fill"></i>
                 Send
               </button>
@@ -110,24 +362,5 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="js/data.js"></script>
-    <script>
-      document.addEventListener("DOMContentLoaded", () => {
-        const caseSelect = document.getElementById("assistantCaseSelect");
-        const documentSelect = document.getElementById("assistantDocumentSelect");
-
-        caseSelect.innerHTML = window.lexiCourtData.cases
-          .map(
-            (item, index) =>
-              `<option value="${item.caseId}" ${index === 0 ? "selected" : ""}>${item.caseId} • ${item.caseTitle}</option>`
-          )
-          .join("");
-
-        documentSelect.innerHTML = window.lexiCourtData.caseDocuments
-          .map((doc, index) => `<option value="${doc.fileName}" ${index === 0 ? "selected" : ""}>${doc.fileName}</option>`)
-          .join("");
-
-        window.lexiCourtUtils.renderAssistantMessages("assistantChatLog");
-      });
-    </script>
   </body>
 </html>

@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Case Detail | LexiCourt</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -19,8 +20,592 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
     />
     <link rel="stylesheet" href="css/main.css" />
+    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module">
+      import { protectPage } from "./js/auth-guard.js";
+      import { initSharedUI } from "./js/page-init.js";
+      import {
+        getCasesForCurrentUser,
+        getDocumentsByCase,
+        createDocumentRecord,
+        uploadCaseFileToStorage,
+        getCaseById,
+        getDraftsByCase,
+        getSummariesByCase,
+        getTimelineByCase,
+        getAiChatsByCase,
+        getReadinessChecksByCase,
+        saveSummary,
+        createReadinessCheck,
+        saveMlPrediction,
+        getCaseIdFromUrl,
+        buildCaseUrl,
+        formatFirestoreDate
+      } from "./js/firestore-service.js";
+      import {
+        fetchCaseInsights,
+        generateSummaryFromApi,
+        classifyDocumentText
+      } from "./js/api-client.js";
+
+      let currentCase = null;
+      let currentDocuments = [];
+      let currentInsights = null;
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function updateCaseLinks(caseId) {
+        const linkMap = {
+          caseDocumentsLink: "case-detail.html",
+          caseAssistantLink: "assistant.html",
+          caseTimelineLink: "timeline.html",
+          caseDraftsLink: "drafts.html"
+        };
+
+        Object.entries(linkMap).forEach(([id, path]) => {
+          const link = document.getElementById(id);
+          if (link && caseId) {
+            link.href = buildCaseUrl(path, caseId);
+          }
+        });
+      }
+
+      function renderStatusBadge(status) {
+        const classes = {
+          Active: "status-active",
+          Pending: "status-pending",
+          Closed: "status-closed",
+          Won: "status-won"
+        };
+        const normalizedStatus = status || "Closed";
+        return `<span class="status-pill ${classes[normalizedStatus] || "status-closed"}">${normalizedStatus}</span>`;
+      }
+
+      function renderCaseMetadata(activeCase) {
+        document.querySelector(".page-title").textContent = activeCase.caseTitle || "Matter detail";
+        document.querySelector(".page-subtitle").textContent = `${activeCase.matterType || "Case"} matter before ${activeCase.courtName || "the court"}${activeCase.nextHearingDate ? ` with the next hearing on ${formatFirestoreDate(activeCase.nextHearingDate)}.` : "."}`;
+
+        document.getElementById("metaCaseNumber").textContent = activeCase.caseNumber || activeCase.id || "—";
+        document.getElementById("metaCourt").textContent = activeCase.courtName || "—";
+        document.getElementById("metaClient").textContent = activeCase.clientName || "—";
+        document.getElementById("metaFiledDate").textContent = formatFirestoreDate(activeCase.filedDate || activeCase.createdAt);
+        document.getElementById("metaNextHearing").textContent = formatFirestoreDate(activeCase.nextHearingDate);
+        document.getElementById("metaStatus").innerHTML = renderStatusBadge(activeCase.status);
+      }
+
+      function toIsoDate(value) {
+        if (!value) {
+          return null;
+        }
+        if (typeof value.toDate === "function") {
+          return value.toDate().toISOString();
+        }
+        const date = value instanceof Date ? value : new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date.toISOString();
+      }
+
+      function switchDetailView(view) {
+        document.querySelectorAll("[data-detail-view]").forEach((item) => {
+          item.classList.toggle("active", item.dataset.detailView === view);
+        });
+
+        document.querySelectorAll("[data-detail-panel]").forEach((panel) => {
+          panel.classList.toggle("is-hidden", panel.dataset.detailPanel !== view);
+        });
+      }
+
+      function renderInsights(insights) {
+        document.getElementById("caseReadinessValue").textContent = `${insights.readinessScore}/100`;
+        document.getElementById("caseDelayRiskValue").textContent = `${insights.delayRisk}%`;
+        document.getElementById("caseUrgencyValue").textContent = insights.urgency;
+        document.getElementById("caseInsightSummary").textContent = insights.summary;
+        document.getElementById("caseInsightActions").innerHTML = (insights.recommendedActions || [])
+          .slice(0, 3)
+          .map((item) => `<span class="mini-pill">${escapeHtml(item)}</span>`)
+          .join("");
+      }
+
+      function renderDocuments(docs) {
+        const grid = document.getElementById("documentGrid");
+        if (!grid) {
+          return;
+        }
+
+        if (!docs.length) {
+          grid.innerHTML = `
+            <article class="doc-card">
+              <div class="card-icon"><i class="bi bi-folder2-open"></i></div>
+              <div class="doc-name">No documents added yet</div>
+              <div class="metric-label">Create a document record to start organizing the case file.</div>
+            </article>
+          `;
+          return;
+        }
+
+        grid.innerHTML = docs
+          .map(
+            (doc) => `
+              <article class="doc-card">
+                <div class="card-icon"><i class="bi bi-file-earmark-text"></i></div>
+                <div class="doc-name">${escapeHtml(doc.displayTitle || doc.fileName || "Untitled document")}</div>
+                <div class="metric-label">${escapeHtml(doc.documentType || "Case document")}</div>
+                <div class="doc-meta">
+                  <span>${escapeHtml(formatFirestoreDate(doc.uploadedAt))}</span>
+                  <span>${escapeHtml(doc.fileSize ? `${doc.fileSize} KB` : "Metadata record")}</span>
+                </div>
+                ${(doc.storageUrl || doc.externalUrl) ? `<a class="text-link" href="${escapeHtml(doc.storageUrl || doc.externalUrl)}" target="_blank" rel="noreferrer">${doc.storageUrl ? "Open stored file" : "Open external file"}</a>` : ""}
+              </article>
+            `
+          )
+          .join("");
+      }
+
+      function canExtractTextLocally(file) {
+        return Boolean(file && (file.type.startsWith("text/") || /\.(txt|md|json|csv|html|xml)$/i.test(file.name)));
+      }
+
+      async function readFileAsText(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => reject(new Error("Unable to extract text from the selected file."));
+          reader.readAsText(file);
+        });
+      }
+
+      function renderSummary(summaryRecord, fallbackText = "") {
+        const summaryScope = document.getElementById("caseSummaryScope");
+        const summaryModel = document.getElementById("caseSummaryModel");
+        const summaryText = document.getElementById("caseSummaryText");
+
+        if (!summaryRecord) {
+          summaryScope.textContent = "Case Summary";
+          summaryModel.textContent = "Awaiting generation";
+          summaryText.textContent = fallbackText || "No summary has been generated for this matter yet.";
+          return;
+        }
+
+        summaryScope.textContent = `${(summaryRecord.summaryScope || "case").toUpperCase()} SUMMARY`;
+        summaryModel.textContent = summaryRecord.modelName || "LexiCourt AI";
+        summaryText.textContent = summaryRecord.summaryText || fallbackText || "Summary is currently unavailable.";
+      }
+
+      function renderReadiness(checkRecord, activeCase, insights) {
+        const list = document.getElementById("caseReadinessList");
+        const status = document.getElementById("caseReadinessStatus");
+        const hearing = document.getElementById("caseReadinessHearing");
+        const notes = document.getElementById("caseReadinessNotes");
+
+        hearing.textContent = formatFirestoreDate(
+          checkRecord?.hearingDate || activeCase?.nextHearingDate,
+          "Not scheduled"
+        );
+        status.innerHTML = `<span class="status-pill ${insights?.urgency === "High" ? "status-pending" : insights?.urgency === "Medium" ? "status-active" : "status-won"}">${insights?.urgency || checkRecord?.severity || "Stable"}</span>`;
+        notes.textContent = checkRecord?.notes || insights?.summary || "Readiness signals will appear here once the case is analyzed.";
+
+        const items = checkRecord?.missingItems?.length
+          ? checkRecord.missingItems
+          : insights?.recommendedActions?.length
+            ? insights.recommendedActions
+            : ["No readiness actions are flagged at the moment."];
+
+        list.innerHTML = items
+          .map(
+            (item) => `
+              <div class="doc-row">
+                <div>
+                  <div class="list-title">${escapeHtml(item)}</div>
+                  <div class="metric-label">Generated from the current matter status, document coverage, and hearing proximity.</div>
+                </div>
+                <span class="mini-pill">${escapeHtml(insights?.urgency || checkRecord?.severity || "Stable")}</span>
+              </div>
+            `
+          )
+          .join("");
+      }
+
+      function buildFallbackInsights(activeCase, docs, drafts, timelines, chats, summaries) {
+        const documentCount = docs.length;
+        const draftCount = drafts.length;
+        const timelineCount = timelines.length;
+        const summaryCount = summaries.length;
+        const chatCount = chats.length;
+        const hearingDate = activeCase.nextHearingDate && typeof activeCase.nextHearingDate.toDate === "function"
+          ? activeCase.nextHearingDate.toDate()
+          : activeCase.nextHearingDate instanceof Date
+            ? activeCase.nextHearingDate
+            : activeCase.nextHearingDate
+              ? new Date(activeCase.nextHearingDate)
+              : null;
+        const daysToHearing = hearingDate ? Math.ceil((hearingDate.getTime() - Date.now()) / 86400000) : null;
+        const hasUpcomingHearing = typeof daysToHearing === "number" && !Number.isNaN(daysToHearing);
+
+        let readinessScore = 48;
+        readinessScore += Math.min(documentCount * 8, 24);
+        readinessScore += Math.min(draftCount * 6, 12);
+        readinessScore += Math.min(summaryCount * 4, 8);
+        readinessScore += Math.min(timelineCount * 4, 8);
+        readinessScore += Math.min(chatCount * 2, 6);
+
+        if (hasUpcomingHearing && daysToHearing <= 14) {
+          readinessScore -= 8;
+        }
+        if (hasUpcomingHearing && daysToHearing <= 5) {
+          readinessScore -= 6;
+        }
+
+        readinessScore = Math.max(22, Math.min(92, readinessScore));
+
+        let delayRisk = 24;
+        if (!documentCount) {
+          delayRisk += 18;
+        }
+        if (!timelineCount) {
+          delayRisk += 12;
+        }
+        if (hasUpcomingHearing && daysToHearing <= 10) {
+          delayRisk += 20;
+        }
+        delayRisk = Math.max(8, Math.min(86, delayRisk));
+
+        const urgency = delayRisk >= 55 ? "High" : delayRisk >= 35 ? "Medium" : "Low";
+        const recommendedActions = [];
+
+        if (!documentCount) {
+          recommendedActions.push("Add the core case documents so the file can be reviewed end-to-end.");
+        }
+        if (!draftCount) {
+          recommendedActions.push("Generate at least one first-pass draft for the upcoming hearing posture.");
+        }
+        if (!timelineCount) {
+          recommendedActions.push("Create a matter timeline to map the hearing chronology clearly.");
+        }
+        if (hasUpcomingHearing && daysToHearing <= 10) {
+          recommendedActions.push("Review the last order and prepare the next-hearing checklist before the listing date.");
+        }
+        if (!recommendedActions.length) {
+          recommendedActions.push("The matter looks structurally prepared. Review the latest order once before the hearing.");
+        }
+
+        return {
+          readinessScore,
+          delayRisk,
+          urgency,
+          summary: `${activeCase.caseTitle || "This matter"} is in ${activeCase.status || "active"} posture with ${documentCount} document record${documentCount === 1 ? "" : "s"} and ${draftCount} saved draft${draftCount === 1 ? "" : "s"}. ${hasUpcomingHearing ? `The next hearing is ${daysToHearing <= 0 ? "imminent" : `in about ${daysToHearing} day${daysToHearing === 1 ? "" : "s"}`}.` : "No next hearing date is currently recorded."}`,
+          recommendedActions
+        };
+      }
+
+      async function generateAndPersistSummary(activeCase, docs) {
+        const response = await generateSummaryFromApi({
+          caseData: {
+            id: activeCase.id,
+            caseId: activeCase.caseId || activeCase.id,
+            caseNumber: activeCase.caseNumber || activeCase.caseId || activeCase.id,
+            caseTitle: activeCase.caseTitle,
+            matterType: activeCase.matterType,
+            courtName: activeCase.courtName,
+            status: activeCase.status,
+            createdAt: toIsoDate(activeCase.createdAt),
+            updatedAt: toIsoDate(activeCase.updatedAt),
+            nextHearingDate: toIsoDate(activeCase.nextHearingDate)
+          },
+          documents: docs
+        });
+
+        const summaryText = response.summary || "No summary could be generated from the current case context.";
+        const record = {
+          caseId: activeCase.id,
+          documentId: "",
+          summaryText,
+          summaryScope: "case",
+          modelName: response.mode === "gemini" ? "gemini" : "lexicourt-ml"
+        };
+
+        await saveSummary(record);
+
+        return record;
+      }
+
+      async function loadCaseWorkspace(activeCase) {
+        currentCase = activeCase;
+        window.activeCaseId = activeCase.id;
+
+        updateCaseLinks(activeCase.id);
+        renderCaseMetadata(activeCase);
+
+        const docs = await getDocumentsByCase(activeCase.id);
+        currentDocuments = docs;
+        renderDocuments(docs);
+
+        const [drafts, summaries, timelines, chats, readinessChecks] = await Promise.all([
+          getDraftsByCase(activeCase.id),
+          getSummariesByCase(activeCase.id),
+          getTimelineByCase(activeCase.id),
+          getAiChatsByCase(activeCase.id),
+          getReadinessChecksByCase(activeCase.id)
+        ]);
+
+        let insights = buildFallbackInsights(activeCase, docs, drafts, timelines, chats, summaries);
+
+        try {
+          const response = await fetchCaseInsights({
+            caseData: {
+              id: activeCase.id,
+              caseId: activeCase.caseId || activeCase.id,
+              caseNumber: activeCase.caseNumber || activeCase.caseId || activeCase.id,
+              caseTitle: activeCase.caseTitle,
+              matterType: activeCase.matterType,
+              courtName: activeCase.courtName,
+              status: activeCase.status,
+              createdAt: toIsoDate(activeCase.createdAt),
+              updatedAt: toIsoDate(activeCase.updatedAt),
+              nextHearingDate: toIsoDate(activeCase.nextHearingDate)
+            },
+            documents: docs,
+            drafts,
+            summaries,
+            timelines,
+            chats
+          });
+
+          if (response.insights) {
+            insights = response.insights;
+          }
+        } catch (error) {
+          console.error("Using local insight fallback:", error);
+        }
+
+        currentInsights = insights;
+        renderInsights(insights);
+
+        try {
+          await saveMlPrediction({
+            caseId: activeCase.id,
+            predictionType: "case_insights",
+            payload: insights,
+            modelName: "lexicourt-ml"
+          });
+        } catch (error) {
+          console.error("Unable to save case insights:", error);
+        }
+
+        let latestSummary = summaries[0] || null;
+        if (!latestSummary) {
+          try {
+            latestSummary = await generateAndPersistSummary(activeCase, docs);
+          } catch (error) {
+            console.error("Using local summary fallback:", error);
+            latestSummary = {
+              summaryScope: "case",
+              modelName: "Local fallback",
+              summaryText: insights.summary
+            };
+          }
+        }
+        renderSummary(latestSummary, insights.summary);
+
+        let latestReadiness = readinessChecks[0] || null;
+        if (!latestReadiness) {
+          await createReadinessCheck({
+            caseId: activeCase.id,
+            hearingDate: activeCase.nextHearingDate || null,
+            checklistType: `${activeCase.matterType || "Matter"} readiness`,
+            missingItems: insights.recommendedActions || [],
+            severity: insights.urgency || "Medium",
+            notes: insights.summary
+          });
+          latestReadiness = {
+            hearingDate: activeCase.nextHearingDate || null,
+            missingItems: insights.recommendedActions || [],
+            severity: insights.urgency || "Medium",
+            notes: insights.summary
+          };
+        }
+        renderReadiness(latestReadiness, activeCase, insights);
+      }
+
+      protectPage(["lawyer", "admin"], async (user, profile) => {
+        document.body.style.display = 'block';
+        initSharedUI();
+
+        try {
+          document.querySelectorAll("[data-detail-view]").forEach((item) => {
+            item.addEventListener("click", (event) => {
+              event.preventDefault();
+              switchDetailView(item.dataset.detailView);
+              history.replaceState(null, "", `#${item.dataset.detailView}`);
+            });
+          });
+
+          const uploadButton = document.getElementById("openDocumentModalBtn");
+          const uploadForm = document.getElementById("documentRecordForm");
+          const uploadSubmit = document.getElementById("documentRecordSubmit");
+          const regenerateSummaryBtn = document.getElementById("regenerateSummaryBtn");
+          const uploadedFileInput = document.getElementById("uploadedFile");
+
+          uploadButton?.addEventListener("click", () => {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById("documentRecordModal")).show();
+          });
+
+          uploadedFileInput?.addEventListener("change", async () => {
+            const file = uploadedFileInput.files?.[0];
+            if (!file) {
+              return;
+            }
+
+            const titleInput = document.getElementById("displayTitle");
+            const fileNameInput = document.getElementById("fileName");
+            const fileSizeInput = document.getElementById("fileSize");
+            const rawTextInput = document.getElementById("rawTextContent");
+
+            if (fileNameInput && !fileNameInput.value.trim()) {
+              fileNameInput.value = file.name;
+            }
+            if (titleInput && !titleInput.value.trim()) {
+              titleInput.value = file.name.replace(/\.[^.]+$/, "");
+            }
+            if (fileSizeInput) {
+              fileSizeInput.value = Math.max(1, Math.round(file.size / 1024));
+            }
+            if (rawTextInput && !rawTextInput.value.trim() && canExtractTextLocally(file)) {
+              try {
+                rawTextInput.value = await readFileAsText(file);
+              } catch (error) {
+                console.error(error);
+              }
+            }
+          });
+
+          uploadForm?.addEventListener("submit", async (event) => {
+            event.preventDefault();
+
+            if (!currentCase) {
+              return;
+            }
+
+            const formData = new FormData(uploadForm);
+            const uploadedFile = uploadedFileInput?.files?.[0] || null;
+            const rawTextContent = String(formData.get("rawTextContent") || "").trim();
+            const extractedText = String(formData.get("extractedText") || "").trim() || rawTextContent;
+            let documentType = String(formData.get("documentType") || "").trim();
+            let externalUrl = String(formData.get("externalUrl") || "").trim();
+            let mimeType = uploadedFile?.type || "text/plain";
+            let fileName = String(formData.get("fileName") || "").trim();
+            let fileSize = Number(formData.get("fileSize") || 0) || 0;
+            let storagePath = "";
+            let storageUrl = "";
+
+            uploadSubmit.disabled = true;
+            uploadSubmit.textContent = uploadedFile ? "Uploading..." : "Saving...";
+
+            try {
+              if (uploadedFile) {
+                const uploadResponse = await uploadCaseFileToStorage(currentCase.id, uploadedFile);
+                storagePath = uploadResponse.storagePath || "";
+                storageUrl = uploadResponse.downloadURL || "";
+                mimeType = uploadResponse.mimeType || mimeType;
+                fileName = uploadResponse.fileName || uploadedFile.name || fileName;
+                fileSize = Math.max(fileSize, Math.round((uploadResponse.fileSize || uploadedFile.size || 0) / 1024));
+              }
+
+              if (!documentType && rawTextContent) {
+                try {
+                  const classification = await classifyDocumentText({ text: rawTextContent });
+                  documentType = classification.classification?.topLabel || "Case document";
+                } catch (classificationError) {
+                  console.error("Document classification fallback:", classificationError);
+                }
+              }
+
+              await createDocumentRecord({
+                caseId: currentCase.id,
+                fileName,
+                displayTitle: String(formData.get("displayTitle") || "").trim(),
+                documentType: documentType || "Case document",
+                mimeType,
+                fileSize,
+                externalUrl,
+                storagePath,
+                storageUrl,
+                rawTextContent,
+                extractedText,
+                notes: String(formData.get("documentNotes") || "").trim(),
+                uploadStatus: "completed"
+              });
+
+              bootstrap.Modal.getInstance(document.getElementById("documentRecordModal"))?.hide();
+              uploadForm.reset();
+              await loadCaseWorkspace(currentCase);
+            } catch (error) {
+              console.error(error);
+              alert(error.message || "Unable to save the document record right now.");
+            } finally {
+              uploadSubmit.disabled = false;
+              uploadSubmit.textContent = "Save Document";
+            }
+          });
+
+          regenerateSummaryBtn?.addEventListener("click", async () => {
+            if (!currentCase) {
+              return;
+            }
+
+            regenerateSummaryBtn.disabled = true;
+            regenerateSummaryBtn.textContent = "Refreshing...";
+
+            try {
+              const summaryRecord = await generateAndPersistSummary(currentCase, currentDocuments);
+              renderSummary(summaryRecord, currentInsights?.summary || "");
+              switchDetailView("summary");
+            } catch (error) {
+              console.error(error);
+              alert("Unable to refresh the summary right now.");
+            } finally {
+              regenerateSummaryBtn.disabled = false;
+              regenerateSummaryBtn.textContent = "Refresh Summary";
+            }
+          });
+
+          const requestedCaseId = getCaseIdFromUrl();
+          let activeCase = requestedCaseId ? await getCaseById(requestedCaseId) : null;
+
+          if (!activeCase) {
+            const cases = await getCasesForCurrentUser();
+            activeCase = cases[0] || null;
+          }
+
+          if (!activeCase) {
+            document.querySelector(".page-title").textContent = "No case selected";
+            document.querySelector(".page-subtitle").textContent = "Create or assign a matter to view its documents and hearing prep details.";
+            document.getElementById("metaCaseNumber").textContent = "—";
+            document.getElementById("metaCourt").textContent = "—";
+            document.getElementById("metaClient").textContent = "—";
+            document.getElementById("metaFiledDate").textContent = "—";
+            document.getElementById("metaNextHearing").textContent = "—";
+            document.getElementById("metaStatus").innerHTML = renderStatusBadge("Closed");
+            renderDocuments([]);
+            return;
+          }
+
+          const initialView = ["summary", "readiness"].includes(window.location.hash.replace("#", ""))
+            ? window.location.hash.replace("#", "")
+            : "documents";
+          switchDetailView(initialView);
+          await loadCaseWorkspace(activeCase);
+        } catch(e) { console.error(e); }
+      });
+    </script>
+    <style>body { display: none; }</style>
   </head>
-  <body>
+  <body class="workspace-page">
     <main class="page-shell">
       <header class="topbar">
         <a href="dashboard.html" class="brand-wrap">
@@ -36,85 +621,205 @@
           <a class="nav-link-pill active" href="case-detail.html"><i class="bi bi-folder2-open"></i> Documents</a>
           <a class="nav-link-pill" href="assistant.html"><i class="bi bi-stars"></i> AI Assistant</a>
           <a class="nav-link-pill" href="drafts.html"><i class="bi bi-file-earmark-richtext"></i> Drafts</a>
-          <a class="nav-link-pill" href="#" onclick="lexiCourtUtils.comingSoon(event, 'Settings arrive in Phase 2.');"><i class="bi bi-gear"></i> Settings</a>
+          <a class="nav-link-pill" href="settings.html"><i class="bi bi-gear"></i> Settings</a>
         </nav>
         <div class="nav-actions">
-          <button class="icon-button" type="button" data-coming-soon="Notifications arrive in Phase 2.">
+          <button class="icon-button" type="button" data-notification-trigger="true">
             <i class="bi bi-bell"></i>
           </button>
           <a class="avatar-chip" href="client-dashboard.html">
-            <span class="avatar-photo">JS</span>
+            <span class="avatar-photo">U</span>
             <span class="avatar-copy">
-              <strong>Jaskirat</strong>
-              <span>Lawyer</span>
+              <strong id="navUserName">User Name</strong>
+              <span id="navUserRole">Role</span>
             </span>
           </a>
+          <button id="logoutBtn" class="btn btn-outline-danger btn-sm p-1 ms-2" type="button" style="border:none;" title="Logout">
+             <i class="bi bi-box-arrow-right"></i>
+          </button>
         </div>
       </header>
 
       <section class="page-header">
         <div>
-          <h1 class="page-title" style="font-size: 44px;">Sharma vs State of Delhi</h1>
+          <h1 class="page-title" style="font-size: 44px;">Loading matter...</h1>
           <p class="page-subtitle">
-            Criminal appeal matter before Delhi High Court with active preparation for the April 2026 hearing.
+            Fetching live matter details, metadata, and document records from your workspace.
           </p>
         </div>
       </section>
 
       <nav class="detail-tabs">
-        <a class="detail-tab active" href="case-detail.html">Documents</a>
-        <a class="detail-tab" href="assistant.html">AI Assistant</a>
-        <a class="detail-tab" href="#" onclick="lexiCourtUtils.comingSoon(event, 'Summary page arrives in Phase 2.');">Summary</a>
-        <a class="detail-tab" href="timeline.html">Timeline</a>
-        <a class="detail-tab" href="drafts.html">Drafts</a>
-        <a class="detail-tab" href="#" onclick="lexiCourtUtils.comingSoon(event, 'Readiness checks arrive in Phase 2.');">Readiness</a>
+        <a id="caseDocumentsLink" class="detail-tab active" href="#documents" data-detail-view="documents">Documents</a>
+        <a id="caseAssistantLink" class="detail-tab" href="assistant.html">AI Assistant</a>
+        <a class="detail-tab" href="#summary" data-detail-view="summary">Summary</a>
+        <a id="caseTimelineLink" class="detail-tab" href="timeline.html">Timeline</a>
+        <a id="caseDraftsLink" class="detail-tab" href="drafts.html">Drafts</a>
+        <a class="detail-tab" href="#readiness" data-detail-view="readiness">Readiness</a>
       </nav>
 
       <section class="metadata-grid">
         <article class="meta-tile">
           <span class="metric-label">Case No</span>
-          <div class="meta-value">CRL.A. 144/2025</div>
+          <div id="metaCaseNumber" class="meta-value">—</div>
         </article>
         <article class="meta-tile">
           <span class="metric-label">Court</span>
-          <div class="meta-value">Delhi High Court</div>
+          <div id="metaCourt" class="meta-value">—</div>
         </article>
         <article class="meta-tile">
           <span class="metric-label">Client</span>
-          <div class="meta-value">Rohit Sharma</div>
+          <div id="metaClient" class="meta-value">—</div>
         </article>
         <article class="meta-tile">
           <span class="metric-label">Filed Date</span>
-          <div class="meta-value">2025-01-10</div>
+          <div id="metaFiledDate" class="meta-value">—</div>
         </article>
         <article class="meta-tile">
           <span class="metric-label">Next Hearing</span>
-          <div class="meta-value">2026-04-15</div>
+          <div id="metaNextHearing" class="meta-value">—</div>
         </article>
         <article class="meta-tile">
           <span class="metric-label">Status</span>
-          <div class="meta-value"><span class="status-pill status-active">Active</span></div>
+          <div id="metaStatus" class="meta-value"><span class="status-pill status-closed">Loading</span></div>
         </article>
       </section>
 
-      <section class="panel-card" style="margin-top: 24px;">
+      <section class="panel-card detail-panel" data-detail-panel="documents" style="margin-top: 24px;">
         <div class="card-head">
           <div class="card-title-wrap">
             <span class="card-icon"><i class="bi bi-folder2-open"></i></span>
             <h2 class="card-title">Documents</h2>
           </div>
-          <button class="btn-accent" type="button" data-coming-soon="Document upload arrives in Phase 2.">Upload Document</button>
+          <button id="openDocumentModalBtn" class="btn-accent" type="button">Add Document Record</button>
         </div>
         <div id="documentGrid" class="document-grid"></div>
       </section>
+
+      <section class="panel-card detail-panel is-hidden" data-detail-panel="summary" style="margin-top: 24px;">
+        <div class="card-head">
+          <div class="card-title-wrap">
+            <span class="card-icon"><i class="bi bi-card-text"></i></span>
+            <h2 class="card-title">Matter Summary</h2>
+          </div>
+          <button id="regenerateSummaryBtn" class="btn-dark" type="button">Refresh Summary</button>
+        </div>
+        <div class="detail-tabs" style="margin-bottom: 16px;">
+          <span id="caseSummaryScope" class="mini-pill">CASE SUMMARY</span>
+          <span id="caseSummaryModel" class="mini-pill">LexiCourt AI</span>
+        </div>
+        <div id="caseSummaryText" class="legal-output" style="white-space: pre-wrap;"></div>
+      </section>
+
+      <section class="panel-card detail-panel is-hidden" data-detail-panel="readiness" style="margin-top: 24px;">
+        <div class="card-head">
+          <div class="card-title-wrap">
+            <span class="card-icon"><i class="bi bi-clipboard-check"></i></span>
+            <h2 class="card-title">Hearing Readiness</h2>
+          </div>
+        </div>
+        <div class="detail-tabs" style="margin-bottom: 16px;">
+          <span id="caseReadinessStatus"><span class="status-pill status-active">Stable</span></span>
+          <span class="mini-pill">Next Hearing • <strong id="caseReadinessHearing">Not scheduled</strong></span>
+        </div>
+        <p id="caseReadinessNotes" class="body-copy"></p>
+        <div id="caseReadinessList" class="doc-list" style="margin-top: 16px;"></div>
+      </section>
+
+      <section class="panel-card" style="margin-top: 24px;">
+        <div class="card-head">
+          <div class="card-title-wrap">
+            <span class="card-icon"><i class="bi bi-activity"></i></span>
+            <h2 class="card-title">AI Case Insight</h2>
+          </div>
+        </div>
+        <div class="summary-grid">
+          <div class="summary-metric">
+            <span class="label-copy">Readiness</span>
+            <div id="caseReadinessValue" class="metric-big">--</div>
+          </div>
+          <div class="summary-metric">
+            <span class="label-copy">Delay Risk</span>
+            <div id="caseDelayRiskValue" class="metric-big">--</div>
+          </div>
+          <div class="summary-metric">
+            <span class="label-copy">Urgency</span>
+            <div id="caseUrgencyValue" class="metric-big">--</div>
+          </div>
+        </div>
+        <p id="caseInsightSummary" class="body-copy" style="margin-top: 20px;">
+          AI insight is loading for this matter.
+        </p>
+        <div id="caseInsightActions" class="detail-tabs" style="margin-top: 16px;"></div>
+      </section>
+
     </main>
+
+    <div class="modal fade document-record-modal" id="documentRecordModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+          <div class="modal-content document-modal-content">
+            <div class="modal-header document-modal-header">
+              <div>
+                <span class="document-modal-kicker">Document Workspace</span>
+                <h2 class="card-title mb-0">Add Document Record</h2>
+              </div>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form id="documentRecordForm">
+              <div class="modal-body">
+                <p class="document-modal-copy">Upload real case files into Firebase Storage, save document metadata, and keep searchable text ready for AI analysis and courtroom prep.</p>
+                <div class="form-grid">
+                  <div>
+                    <label class="section-label" for="displayTitle">Display Title</label>
+                    <input class="app-input" id="displayTitle" name="displayTitle" type="text" placeholder="Last Court Order" required />
+                  </div>
+                  <div>
+                    <label class="section-label" for="fileName">File Name</label>
+                    <input class="app-input" id="fileName" name="fileName" type="text" placeholder="Last_Court_Order.pdf" required />
+                  </div>
+                  <div style="grid-column: 1 / -1;">
+                    <label class="section-label" for="uploadedFile">Upload File</label>
+                    <input class="app-input" id="uploadedFile" name="uploadedFile" type="file" />
+                  </div>
+                  <div>
+                    <label class="section-label" for="documentType">Document Type</label>
+                    <input class="app-input" id="documentType" name="documentType" type="text" placeholder="Court Order, Affidavit, Notice" />
+                  </div>
+                  <div>
+                    <label class="section-label" for="fileSize">File Size (KB)</label>
+                    <input class="app-input" id="fileSize" name="fileSize" type="number" min="0" placeholder="2100" />
+                  </div>
+                  <div style="grid-column: 1 / -1;">
+                    <label class="section-label" for="externalUrl">External File URL</label>
+                    <input class="app-input" id="externalUrl" name="externalUrl" type="url" placeholder="https://example.com/court-order.pdf" />
+                  </div>
+                  <div style="grid-column: 1 / -1;">
+                    <label class="section-label" for="rawTextContent">Document Text</label>
+                    <textarea class="app-textarea" id="rawTextContent" name="rawTextContent" placeholder="Paste extracted or typed document text here for AI analysis."></textarea>
+                  </div>
+                  <div style="grid-column: 1 / -1;">
+                    <label class="section-label" for="extractedText">Clean Extracted Text (Optional)</label>
+                    <textarea class="app-textarea" id="extractedText" name="extractedText" placeholder="Optional cleaned-up version of the text above."></textarea>
+                  </div>
+                  <div style="grid-column: 1 / -1;">
+                    <label class="section-label" for="documentNotes">Document Notes</label>
+                    <textarea class="app-textarea" id="documentNotes" name="documentNotes" placeholder="Add filing notes, exhibit context, or hearing relevance."></textarea>
+                  </div>
+                </div>
+              </div>
+              <div class="modal-footer document-modal-footer">
+                <button class="btn-dark" type="button" data-bs-dismiss="modal">Cancel</button>
+                <button id="documentRecordSubmit" class="btn-accent" type="submit">Save Document</button>
+              </div>
+            </form>
+          </div>
+      </div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="js/data.js"></script>
     <script>
-      document.addEventListener("DOMContentLoaded", () => {
-        window.lexiCourtUtils.renderDocuments("documentGrid");
-      });
+      // DOMContentLoaded is empty now since data loading is in protectPage callback
     </script>
   </body>
 </html>

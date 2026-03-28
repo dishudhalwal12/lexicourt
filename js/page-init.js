@@ -1,0 +1,393 @@
+import { getCurrentUserProfile, logoutUser, listenToAuthState } from "./auth-service.js";
+import {
+    formatFirestoreDate,
+    getCasesForCurrentUser,
+    getDocumentsByCase,
+    getDraftsByCase,
+    getReadinessChecksByCase
+} from "./firestore-service.js";
+
+let topbarChromeBound = false;
+let notificationsBound = false;
+let storyMotionBound = false;
+
+function escapeHtml(value) {
+    return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+}
+
+function toDate(value) {
+    if (!value) {
+        return null;
+    }
+
+    if (typeof value.toDate === "function") {
+        return value.toDate();
+    }
+
+    if (value instanceof Date) {
+        return value;
+    }
+
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function ensureNotificationsModal() {
+    let modal = document.getElementById("workspaceNotificationsModal");
+    if (modal) {
+        return modal;
+    }
+
+    modal = document.createElement("div");
+    modal.className = "modal fade";
+    modal.id = "workspaceNotificationsModal";
+    modal.tabIndex = -1;
+    modal.setAttribute("aria-hidden", "true");
+    modal.innerHTML = `
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content workspace-modal-shell">
+          <div class="modal-header">
+            <div>
+              <div class="document-modal-kicker">Workspace Signals</div>
+              <h2 class="modal-title">Notifications</h2>
+            </div>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="document-modal-copy">Live hearing reminders, missing-file checks, and matter health alerts appear here.</div>
+            <div id="workspaceNotificationsState" class="metric-label">Loading live workspace signals...</div>
+            <div id="workspaceNotificationsList" class="notification-feed"></div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    return modal;
+}
+
+function renderNotifications(items) {
+    const state = document.getElementById("workspaceNotificationsState");
+    const list = document.getElementById("workspaceNotificationsList");
+    if (!state || !list) {
+        return;
+    }
+
+    if (!items.length) {
+        state.textContent = "All clear. No urgent workspace alerts right now.";
+        list.innerHTML = `
+          <article class="notification-item">
+            <span class="notification-severity notification-severity-clear">Clear</span>
+            <div class="notification-body">
+              <strong>Workspace is looking good</strong>
+              <p>Your hearing schedule, drafts, and document records are currently in a healthy state.</p>
+            </div>
+          </article>
+        `;
+        return;
+    }
+
+    state.textContent = `${items.length} live workspace signal${items.length === 1 ? "" : "s"} found.`;
+    list.innerHTML = items
+        .map(
+            (item) => `
+              <article class="notification-item">
+                <span class="notification-severity notification-severity-${escapeHtml(item.level || "info")}">${escapeHtml(item.levelLabel || "Info")}</span>
+                <div class="notification-body">
+                  <strong>${escapeHtml(item.title)}</strong>
+                  <p>${escapeHtml(item.body)}</p>
+                  ${item.href ? `<a class="inline-link" href="${escapeHtml(item.href)}">Open matter</a>` : ""}
+                </div>
+              </article>
+            `
+        )
+        .join("");
+}
+
+async function buildNotifications(profile) {
+    const cases = await getCasesForCurrentUser();
+    const now = Date.now();
+    const items = [];
+
+    const limitedCases = cases.slice(0, 8);
+    const relatedData = await Promise.all(
+        limitedCases.map(async (caseItem) => {
+            const [documents, drafts, readinessChecks] = await Promise.all([
+                getDocumentsByCase(caseItem.id),
+                getDraftsByCase(caseItem.id),
+                getReadinessChecksByCase(caseItem.id)
+            ]);
+
+            return {
+                caseItem,
+                documents,
+                drafts,
+                readinessChecks
+            };
+        })
+    );
+
+    relatedData.forEach(({ caseItem, documents, drafts, readinessChecks }) => {
+        const hearingDate = toDate(caseItem.nextHearingDate);
+        const dayDelta = hearingDate ? Math.ceil((hearingDate.getTime() - now) / 86400000) : null;
+        const href = `case-detail.html?caseId=${encodeURIComponent(caseItem.id)}`;
+
+        if (hearingDate && dayDelta !== null && dayDelta >= 0 && dayDelta <= 7) {
+            items.push({
+                level: dayDelta <= 2 ? "high" : "medium",
+                levelLabel: dayDelta <= 2 ? "Urgent" : "Soon",
+                title: `${caseItem.caseTitle || "Matter"} hearing is coming up`,
+                body: `Next hearing is on ${formatFirestoreDate(caseItem.nextHearingDate)}. Review the file before the court date closes in.`,
+                href
+            });
+        }
+
+        if (!hearingDate && caseItem.status === "Active") {
+            items.push({
+                level: "medium",
+                levelLabel: "Review",
+                title: `${caseItem.caseTitle || "Matter"} has no next hearing date`,
+                body: "Update the matter timeline so the workspace can track hearing readiness properly.",
+                href
+            });
+        }
+
+        if (!documents.length) {
+            items.push({
+                level: "medium",
+                levelLabel: "Missing",
+                title: `${caseItem.caseTitle || "Matter"} has no document record yet`,
+                body: "Add at least one case document so summaries, timelines, and recall signals become more reliable.",
+                href
+            });
+        }
+
+        if (!drafts.length && caseItem.status === "Active") {
+            items.push({
+                level: "info",
+                levelLabel: "Draft",
+                title: `${caseItem.caseTitle || "Matter"} is ready for a first draft`,
+                body: "No draft has been saved yet for this active matter. Generate one to speed up the next filing cycle.",
+                href: `drafts.html?caseId=${encodeURIComponent(caseItem.id)}`
+            });
+        }
+
+        const latestCheck = readinessChecks[0];
+        if (latestCheck?.missingItems?.length) {
+            items.push({
+                level: "high",
+                levelLabel: "Action",
+                title: `${caseItem.caseTitle || "Matter"} has readiness gaps`,
+                body: latestCheck.missingItems[0],
+                href
+            });
+        }
+    });
+
+    if (profile?.role === "admin") {
+        const pendingCount = cases.filter((item) => item.status === "Pending").length;
+        if (pendingCount) {
+            items.unshift({
+                level: "info",
+                levelLabel: "Admin",
+                title: `${pendingCount} matter${pendingCount === 1 ? "" : "s"} need admin review`,
+                body: "Pending matters across the workspace should be reviewed for movement, hearing dates, and completeness.",
+                href: "admin.html"
+            });
+        }
+    }
+
+    const rank = { high: 0, medium: 1, info: 2, clear: 3 };
+    return items
+        .sort((a, b) => (rank[a.level] ?? 9) - (rank[b.level] ?? 9))
+        .slice(0, 8);
+}
+
+function initNotificationCenter(profile) {
+    if (notificationsBound) {
+        return;
+    }
+
+    const buttons = Array.from(document.querySelectorAll("[data-notification-trigger]"));
+    if (!buttons.length) {
+        return;
+    }
+
+    notificationsBound = true;
+    const modalEl = ensureNotificationsModal();
+
+    buttons.forEach((button) => {
+        button.addEventListener("click", async (event) => {
+            event.preventDefault();
+
+            const modal = window.bootstrap?.Modal
+                ? window.bootstrap.Modal.getOrCreateInstance(modalEl)
+                : null;
+            const state = document.getElementById("workspaceNotificationsState");
+            const list = document.getElementById("workspaceNotificationsList");
+
+            if (state) {
+                state.textContent = "Loading live workspace signals...";
+            }
+            if (list) {
+                list.innerHTML = "";
+            }
+
+            modal?.show();
+
+            try {
+                const notifications = await buildNotifications(profile);
+                renderNotifications(notifications);
+            } catch (error) {
+                console.error("Unable to load notifications:", error);
+                renderNotifications([]);
+                if (state) {
+                    state.textContent = "Unable to load live notifications right now.";
+                }
+            }
+        });
+    });
+}
+
+export function initTopbarChrome() {
+    initStoryMotion();
+
+    const topbar = document.querySelector(".topbar");
+    if (!topbar) {
+        if (!topbarChromeBound && document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", initTopbarChrome, { once: true });
+        }
+        return;
+    }
+
+    if (topbarChromeBound) {
+        return;
+    }
+
+    topbarChromeBound = true;
+    const isWorkspacePage = document.body.classList.contains("workspace-page");
+    let ticking = false;
+
+    const syncTopbarState = () => {
+        const isCondensed = !isWorkspacePage && window.scrollY > 28;
+
+        topbar.classList.toggle("is-condensed", isCondensed);
+        topbar.classList.remove("is-hidden");
+        document.body.classList.toggle("nav-is-condensed", isCondensed);
+        document.body.classList.remove("nav-is-hidden");
+        ticking = false;
+    };
+
+    const requestSync = () => {
+        if (ticking) {
+            return;
+        }
+
+        ticking = true;
+        window.requestAnimationFrame(syncTopbarState);
+    };
+
+    syncTopbarState();
+    window.addEventListener("scroll", requestSync, { passive: true });
+    window.addEventListener("resize", requestSync);
+}
+
+function initStoryMotion() {
+    if (storyMotionBound) {
+        return;
+    }
+
+    const selectors = [
+        ".page-header",
+        ".panel-card",
+        ".meta-tile",
+        ".doc-card",
+        ".chat-side-panel",
+        ".output-card",
+        ".timeline-card",
+        ".timeline-event",
+        ".hero-copy",
+        ".hero-side-card",
+        ".feature-card",
+        ".classic-step",
+        ".auth-showcase",
+        ".auth-card",
+        ".table-card",
+        ".assistant-card",
+        ".summary-metric"
+    ];
+
+    const elements = [...document.querySelectorAll(selectors.join(","))]
+        .filter((element) => !element.classList.contains("story-reveal"));
+
+    if (!elements.length) {
+        return;
+    }
+
+    storyMotionBound = true;
+
+    elements.forEach((element, index) => {
+        element.classList.add("story-reveal");
+        element.style.setProperty("--story-delay", `${Math.min(index * 55, 420)}ms`);
+    });
+
+    const observer = new IntersectionObserver(
+        (entries) => {
+            entries.forEach((entry) => {
+                if (!entry.isIntersecting) {
+                    return;
+                }
+
+                entry.target.classList.add("is-visible");
+                observer.unobserve(entry.target);
+            });
+        },
+        {
+            threshold: 0.16,
+            rootMargin: "0px 0px -8% 0px"
+        }
+    );
+
+    elements.forEach((element) => observer.observe(element));
+}
+
+// Call this function once the DOM is loaded to wire up standard UI elements
+export function initSharedUI() {
+    initTopbarChrome();
+    initStoryMotion();
+
+    const logoutBtn = document.getElementById("logoutBtn");
+    if (logoutBtn) {
+        logoutBtn.addEventListener("click", async (e) => {
+            e.preventDefault();
+            try {
+                await logoutUser();
+                window.location.href = "login.html";
+            } catch (err) {
+                console.error("Logout failed:", err);
+            }
+        });
+    }
+
+    // Sync User Name in Navbar
+    listenToAuthState(async (user) => {
+        if (user) {
+            const profile = await getCurrentUserProfile(user.uid);
+            const userNameEl = document.getElementById("navUserName");
+            const roleEl = document.getElementById("navUserRole");
+            
+            if (userNameEl) {
+                userNameEl.textContent = profile?.fullName || user.displayName || user.email || "LexiCourt User";
+            }
+            if (roleEl) {
+                roleEl.textContent = String(profile?.role || "user").toUpperCase();
+            }
+
+            initNotificationCenter(profile);
+        }
+    });
+}

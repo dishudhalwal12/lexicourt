@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LexiCourt | Your AI-Powered Legal Assistant</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -19,15 +20,46 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
     />
     <link rel="stylesheet" href="css/main.css" />
+    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module">
+      import { listenToAuthState, getCurrentUserProfile, logoutUser } from "./js/auth-service.js";
+      import { initTopbarChrome } from "./js/page-init.js";
+      window.handleLogout = async function() {
+           try {
+             await logoutUser();
+             window.location.reload();
+           } catch(e) { console.error(e); }
+      };
+      
+      document.addEventListener("DOMContentLoaded", () => {
+        initTopbarChrome();
+        listenToAuthState(async (user) => {
+          const navLinks = document.querySelector(".nav-actions");
+          if (user && navLinks) {
+            navLinks.id = "authNavLinks";
+            const profile = await getCurrentUserProfile(user.uid);
+            let dashboardHref = "dashboard.html";
+            if(profile) {
+                if(profile.role === "admin") dashboardHref = "admin.html";
+                if(profile.role === "client") dashboardHref = "client-dashboard.html";
+            }
+            navLinks.innerHTML = `
+              <a class="nav-link-pill me-3" href="${dashboardHref}">Go to Dashboard</a>
+              <button class="btn btn-link text-danger text-decoration-none p-0" onclick="window.handleLogout()">Logout</button>
+            `;
+          }
+        });
+      });
+    </script>
   </head>
-  <body>
+  <body class="public-page landing-page">
     <main class="page-shell">
       <header class="topbar">
         <a href="index.html" class="brand-wrap">
           <span class="brand-mark"></span>
           <span>
             <span class="brand-text">LexiCourt</span>
-            <span class="brand-subtext">Beautiful legal workflow, built for modern practice</span>
+            <span class="brand-subtext">Courtroom-grade prep for modern Indian practice</span>
           </span>
         </a>
         <nav class="nav-cluster">
@@ -43,35 +75,55 @@
 
       <section class="hero-panel">
         <article class="hero-copy">
-          <div>
-            <span class="hero-kicker"><i class="bi bi-stars"></i> AI-powered legal workflow</span>
-            <h1>Casework that feels sharp, calm, and court-ready.</h1>
+          <div class="hero-copy-top">
+            <span class="hero-kicker"><i class="bi bi-stars"></i> Black coat energy. Digital precision.</span>
+            <h1>Made for the black coat, the white band, and courtroom pressure.</h1>
             <p>
-              LexiCourt brings your cases, filings, hearing timelines, and draft generation into
-              one elegant workspace. Built for solo lawyers and lean legal teams who want clarity,
-              speed, and a product that actually feels premium.
+              LexiCourt turns case files, court orders, timelines, and first-draft filings into one
+              sharp legal workspace. It is designed for Indian lawyers who need speed, memory, and
+              courtroom composure without losing the gravity of the profession.
             </p>
             <div class="hero-actions">
               <a class="btn-dark" href="login.html">Login</a>
               <a class="btn-accent" href="register.html">Get Started</a>
             </div>
+            <div class="hero-micro-chips">
+              <span class="hero-micro-chip">Delhi High Court flow</span>
+              <span class="hero-micro-chip">AI case recall</span>
+              <span class="hero-micro-chip">Timeline extraction</span>
+              <span class="hero-micro-chip">Drafts in minutes</span>
+            </div>
           </div>
 
-          <div class="hero-video-card">
-            <video autoplay muted loop playsinline poster="">
-              <source src="https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4" type="video/mp4" />
-            </video>
-            <div class="hero-video-overlay">
-              <span class="floating-badge"><i class="bi bi-camera-video"></i> Ambient workspace preview</span>
-              <div>
+          <div class="hero-summary-surface">
+            <div class="hero-summary-copy">
+              <span class="hero-summary-kicker">From file stack to courtroom rhythm</span>
+              <div class="hero-summary-points">
+                <div class="hero-summary-point">
+                  <strong>One command center for every matter</strong>
+                  <span>Cases, documents, timelines, and draft work stay tied to the same litigation story.</span>
+                </div>
+                <div class="hero-summary-point">
+                  <strong>Preparation that feels composed</strong>
+                  <span>Jump from raw documents to hearing-ready context without the usual scramble.</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="hero-video-card">
+              <video autoplay muted loop playsinline poster="">
+                <source src="https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4" type="video/mp4" />
+              </video>
+              <div class="hero-video-overlay">
+                <span class="floating-badge"><i class="bi bi-camera-video"></i> Court-prep preview</span>
                 <div class="hero-stats">
                   <div class="hero-stat-pill">
                     <strong>24</strong>
-                    <span>Active matters</span>
+                    <span>Live matters</span>
                   </div>
                   <div class="hero-stat-pill">
                     <strong>68%</strong>
-                    <span>Win rate trend</span>
+                    <span>Win trend</span>
                   </div>
                   <div class="hero-stat-pill">
                     <strong>15 Apr</strong>
@@ -85,105 +137,148 @@
 
         <aside class="hero-side">
           <article class="hero-side-card sky">
-            <span class="hero-kicker">Smart Court Prep</span>
-            <h3>Ask. Review. Prepare.</h3>
+            <div class="hero-side-top">
+              <span class="hero-kicker">Smart Court Prep</span>
+            </div>
+            <h3>Read the file like an argument map.</h3>
             <p>
-              AI-assisted document chat, quick case context, and timelines that help you walk into
-              hearings feeling ready instead of rushed.
+              AI-assisted document chat, order recall, and hearing chronology keep the lawyer’s
+              memory sharp even when the file is thick and the court clock is moving.
             </p>
+            <div class="hero-side-surface">
+              <div class="hero-side-bubble dark">What was the last order passed?</div>
+              <div class="hero-side-bubble light">Matter adjourned for bail arguments on 10 March 2025.</div>
+            </div>
             <a class="btn-dark" href="assistant.html">Explore Assistant</a>
           </article>
 
           <article class="hero-side-card coral">
-            <span class="hero-kicker">Fast Drafting</span>
+            <div class="hero-side-top">
+              <span class="hero-kicker">Drafts With Edge</span>
+            </div>
             <h3>Affidavits. Notices. Applications.</h3>
             <p>
-              Structured draft workflows with realistic legal formatting so the product feels close
-              to real-world usage, even in this display-first phase.
+              Structured draft workflows turn case context into polished first-pass filings that
+              already feel like counsel touched them before the final review.
             </p>
+            <div class="hero-mini-doc-card">
+              <span>Draft Moodboard</span>
+              <strong>Supportive Affidavit for Bail</strong>
+              <div class="hero-mini-doc-lines">
+                <i></i>
+                <i></i>
+                <i></i>
+                <i></i>
+              </div>
+            </div>
           </article>
         </aside>
       </section>
 
       <section id="features" class="section-block">
-        <span class="section-kicker"><i class="bi bi-grid-1x2"></i> Core Features</span>
-        <div class="classic-section-head">
-          <div>
-            <h2>Built around the three things legal teams use most.</h2>
-          </div>
+        <div class="feature-section-intro">
+          <span class="section-kicker"><i class="bi bi-grid-1x2"></i> Features</span>
+          <h2>A legal workspace with edge, rhythm, and courtroom memory.</h2>
           <p class="section-intro">
-            A more classic feature layout that feels cleaner and stronger: clear hierarchy,
-            balanced spacing, and a product story that reads like a serious software homepage.
+            Every block is designed around the way a lawyer actually thinks before a hearing:
+            scan the matter, recall the order, and shape the next move.
           </p>
         </div>
 
-        <div class="classic-feature-board">
-          <div class="classic-feature-summary">
-            <div class="feature-bg-media" aria-hidden="true">
-              <video autoplay muted loop playsinline>
-                <source src="assets/feature-gradient.mp4" type="video/mp4" />
-              </video>
+        <div class="feature-story-grid">
+          <article class="feature-story-card">
+            <div class="feature-story-head">
+              <span class="feature-story-kicker">Case Management</span>
             </div>
-            <span class="mini-pill">Phase 1 Product Surface</span>
-            <h3>Focused, credible, and presentation-ready.</h3>
-            <p>
-              LexiCourt is presented around workflow clarity: manage the matter, understand the
-              file, and prepare the output. That makes the product feel grounded and easier to trust.
-            </p>
-          </div>
-
-          <div class="classic-feature-list">
-            <article class="classic-feature-item">
-              <div class="feature-bg-media" aria-hidden="true">
-                <video autoplay muted loop playsinline>
-                  <source src="assets/feature-gradient.mp4" type="video/mp4" />
-                </video>
-              </div>
-              <div class="classic-feature-top">
-                <span class="feature-number">01</span>
-                <span class="metric-label">Matter control</span>
-              </div>
-              <h3>Case Management</h3>
+            <div class="feature-story-copy">
+              <h3>Keep every matter structured and easy to scan.</h3>
               <p>
-                Organize case records, client information, court metadata, and next-hearing details
-                in a clean workspace that feels deliberate and professional.
+                Court, client, filing posture, and next hearing sit in one sharp control layer so
+                the matter reads cleanly the second you open it.
               </p>
-            </article>
+            </div>
+            <div class="feature-story-surface">
+              <div class="feature-mini-list">
+                <div class="feature-mini-row">
+                  <div>
+                    <strong>CAS-001</strong>
+                    <span>Sharma vs State of Delhi</span>
+                  </div>
+                  <em class="mini-status active">Active</em>
+                </div>
+                <div class="feature-mini-row">
+                  <div>
+                    <strong>CAS-002</strong>
+                    <span>Mehta Property Dispute</span>
+                  </div>
+                  <em class="mini-status pending">Pending</em>
+                </div>
+                <div class="feature-mini-row">
+                  <div>
+                    <strong>CAS-003</strong>
+                    <span>Kumar Family Settlement</span>
+                  </div>
+                  <em class="mini-status won">Won</em>
+                </div>
+              </div>
+            </div>
+          </article>
 
-            <article class="classic-feature-item">
-              <div class="feature-bg-media" aria-hidden="true">
-                <video autoplay muted loop playsinline>
-                  <source src="assets/feature-gradient.mp4" type="video/mp4" />
-                </video>
-              </div>
-              <div class="classic-feature-top">
-                <span class="feature-number">02</span>
-                <span class="metric-label">Document intelligence</span>
-              </div>
-              <h3>AI Document Chat</h3>
+          <article class="feature-story-card feature-story-card-featured">
+            <div class="feature-story-head">
+              <span class="feature-story-kicker">AI Document Chat</span>
+            </div>
+            <div class="feature-story-copy">
+              <h3>Move from reading files to getting usable answers.</h3>
               <p>
-                Ask focused questions about orders, affidavits, and case material through an assistant
-                interface designed to feel calm, structured, and useful.
+                Ask about orders, dates, and hearing posture in a mode that feels direct, fast, and
+                unmistakably legal instead of generic chat UI.
               </p>
-            </article>
+            </div>
+            <div class="feature-story-surface">
+              <div class="feature-mini-chat">
+                <div class="feature-query-pill">What was the last order passed?</div>
+                <div class="feature-mini-bubble ai">
+                  Last order dated 10 March 2025 adjourned the matter for bail arguments.
+                </div>
+                <div class="feature-mini-bubble user">
+                  List the next key hearing date.
+                </div>
+                <div class="feature-mini-bubble ai">
+                  Next listed date is 15 April 2026 before Delhi High Court.
+                </div>
+              </div>
+            </div>
+          </article>
 
-            <article class="classic-feature-item">
-              <div class="feature-bg-media" aria-hidden="true">
-                <video autoplay muted loop playsinline>
-                  <source src="assets/feature-gradient.mp4" type="video/mp4" />
-                </video>
-              </div>
-              <div class="classic-feature-top">
-                <span class="feature-number">03</span>
-                <span class="metric-label">Output generation</span>
-              </div>
-              <h3>Draft Generator</h3>
+          <article class="feature-story-card">
+            <div class="feature-story-head">
+              <span class="feature-story-kicker">Draft Generator</span>
+            </div>
+            <div class="feature-story-copy">
+              <h3>Generate polished first drafts without losing the legal tone.</h3>
               <p>
-                Produce first-pass affidavits, notices, and applications inside a drafting layout
-                that looks polished enough to sell the product vision immediately.
+                Start with structured case context and generate first drafts that feel disciplined,
+                usable, and close to actual filing language.
               </p>
-            </article>
-          </div>
+            </div>
+            <div class="feature-story-surface">
+              <div class="feature-mini-doc">
+                <span class="feature-mini-doc-label">Generated Draft</span>
+                <strong>Affidavit in Support of Bail</strong>
+                <div class="feature-mini-lines">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span class="short"></span>
+                </div>
+                <div class="feature-mini-doc-footer">
+                  <span>Ready for review</span>
+                  <span>Version 1.0</span>
+                </div>
+              </div>
+            </div>
+          </article>
         </div>
       </section>
 
@@ -191,48 +286,120 @@
         <span class="section-kicker"><i class="bi bi-lightning-charge"></i> How It Works</span>
         <div class="classic-section-head">
           <div>
-            <h2>A straightforward workflow, shown in a more timeless way.</h2>
+            <h2>From first file drop to final courtroom recall.</h2>
           </div>
           <p class="section-intro">
-            This section now reads more like classic SaaS storytelling: three clear steps, one clean
-            sequence, and less visual noise.
+            LexiCourt follows the rhythm of actual practice in India: open the matter, tighten the
+            record, and step into court with the file already mentally mapped.
           </p>
         </div>
 
-        <div class="classic-process">
-          <div class="classic-process-line"></div>
+        <div class="how-it-works-stage">
+          <div class="how-it-works-rail">
+            <span class="how-it-works-rail-label">Matter flow</span>
+            <div class="how-it-works-rail-line"></div>
+            <div class="how-it-works-rail-stops">
+              <span>Open</span>
+              <span>Analyze</span>
+              <span>Argue</span>
+            </div>
+          </div>
 
-          <article class="classic-step">
-            <span class="classic-step-number">01</span>
-            <h3>Create the matter</h3>
-            <p>
-              Set up the case with client, court, case number, status, and hearing metadata so the
-              file has a clear operational base from the beginning.
-            </p>
-          </article>
+          <div class="how-it-works-grid">
+            <article class="how-it-works-card">
+              <div class="how-it-works-top">
+                <span class="how-it-works-number">01</span>
+                <span class="how-it-works-tag">Case Intake</span>
+              </div>
+              <h3>Build the matter like a live brief, not a dead folder.</h3>
+              <p>
+                Create the case workspace with court name, case number, parties, hearing date, and
+                internal notes so every matter starts with legal context already attached.
+              </p>
+              <div class="how-it-works-surface">
+                <div class="how-it-works-line-item">
+                  <strong>CRL.A. 144/2025</strong>
+                  <span>Delhi High Court • Active</span>
+                </div>
+                <div class="how-it-works-line-item">
+                  <strong>Rohit Sharma v. State of Delhi</strong>
+                  <span>Next hearing on 15 Apr 2026</span>
+                </div>
+              </div>
+            </article>
 
-          <article class="classic-step">
-            <span class="classic-step-number">02</span>
-            <h3>Review documents with AI</h3>
-            <p>
-              Move from browsing files to extracting context quickly through AI chat, summaries, and
-              hearing chronology views built for legal preparation.
-            </p>
-          </article>
+            <article class="how-it-works-card how-it-works-card-featured">
+              <div class="how-it-works-top">
+                <span class="how-it-works-number">02</span>
+                <span class="how-it-works-tag">AI Reading Layer</span>
+              </div>
+              <h3>Turn dense orders and filings into quick legal recall.</h3>
+              <p>
+                Upload the record, let the assistant pull key dates and last orders, and move from
+                document hunting to focused preparation in a few prompts.
+              </p>
+              <div class="how-it-works-surface">
+                <div class="how-it-works-query">What was the last order passed?</div>
+                <div class="how-it-works-response">
+                  Matter adjourned for bail arguments on 10 March 2025. Next listed date is 15
+                  April 2026.
+                </div>
+              </div>
+            </article>
 
-          <article class="classic-step">
-            <span class="classic-step-number">03</span>
-            <h3>Generate hearing-ready output</h3>
-            <p>
-              Open the draft workflow, review the case record, and prepare the next filing or update
-              in one continuous flow that feels close to production.
-            </p>
-          </article>
+            <article class="how-it-works-card">
+              <div class="how-it-works-top">
+                <span class="how-it-works-number">03</span>
+                <span class="how-it-works-tag">Hearing Output</span>
+              </div>
+              <h3>Leave the prep stage with drafts, timeline, and readiness.</h3>
+              <p>
+                Generate first-pass filings, review missing document signals, and carry a tighter
+                memory of the case into court without last-minute scrambling.
+              </p>
+              <div class="how-it-works-surface">
+                <div class="how-it-works-line-item">
+                  <strong>Affidavit in Support of Bail</strong>
+                  <span>Draft ready for review</span>
+                </div>
+                <div class="how-it-works-line-item">
+                  <strong>Readiness score: 82/100</strong>
+                  <span>One annexure still recommended</span>
+                </div>
+              </div>
+            </article>
+          </div>
         </div>
       </section>
 
       <footer class="footer-minimal">LexiCourt • AI-Powered Legal Assistant &amp; Virtual Court Case Management System</footer>
     </main>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        const revealTargets = document.querySelectorAll(
+          ".hero-panel, .section-block, .feature-story-card, .classic-step, .footer-minimal"
+        );
+
+        revealTargets.forEach((element, index) => {
+          element.classList.add("reveal-up");
+          element.style.transitionDelay = `${Math.min(index * 90, 280)}ms`;
+        });
+
+        const revealObserver = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((entry) => {
+              if (entry.isIntersecting) {
+                entry.target.classList.add("is-visible");
+                revealObserver.unobserve(entry.target);
+              }
+            });
+          },
+          { threshold: 0.18 }
+        );
+
+        revealTargets.forEach((element) => revealObserver.observe(element));
+      });
+    </script>
   </body>
 </html>

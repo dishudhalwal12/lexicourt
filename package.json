@@ -1,0 +1,10 @@
+{
+  "name": "lexicourt",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "api": "node server.mjs",
+    "api:dev": "node --watch server.mjs"
+  }
+}

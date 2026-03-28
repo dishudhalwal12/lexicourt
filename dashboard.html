@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>LexiCourt Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -19,8 +20,452 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
     />
     <link rel="stylesheet" href="css/main.css" />
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module">
+      import { protectPage } from "./js/auth-guard.js";
+      import { initSharedUI } from "./js/page-init.js";
+      import {
+        getCasesForCurrentUser,
+        getDocumentsByCase,
+        getDraftsByCase,
+        getTimelineByCase,
+        getSummariesByCase,
+        getAiChatsByCase,
+        saveMlPrediction,
+        formatFirestoreDate
+      } from "./js/firestore-service.js";
+      import { fetchCaseInsights, generateSummaryFromApi } from "./js/api-client.js";
+      import { downloadTextPdf } from "./js/pdf-export.js";
+
+      const dashboardFilters = {
+        search: "",
+        statuses: new Set(),
+        matterType: "all",
+        startDate: "",
+        endDate: ""
+      };
+
+      let allCases = [];
+
+      function getCaseDate(item) {
+        const rawDate = item.filedDate || item.createdAt;
+        if (typeof rawDate?.toDate === "function") {
+          return rawDate.toDate();
+        }
+        if (rawDate instanceof Date) {
+          return rawDate;
+        }
+        if (rawDate) {
+          const parsed = new Date(rawDate);
+          return Number.isNaN(parsed.getTime()) ? null : parsed;
+        }
+        return null;
+      }
+
+      function toDateInputValue(date) {
+        if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+          return "";
+        }
+        return date.toISOString().slice(0, 10);
+      }
+
+      function updateDateRangeLabel() {
+        const pill = document.getElementById("dashboardDateRangeBtn");
+        if (!pill) {
+          return;
+        }
+
+        if (!dashboardFilters.startDate && !dashboardFilters.endDate) {
+          pill.innerHTML = `<i class="bi bi-calendar3"></i> All dates`;
+          return;
+        }
+
+        const start = dashboardFilters.startDate ? formatFirestoreDate(new Date(`${dashboardFilters.startDate}T00:00:00`), dashboardFilters.startDate) : "Start";
+        const end = dashboardFilters.endDate ? formatFirestoreDate(new Date(`${dashboardFilters.endDate}T00:00:00`), dashboardFilters.endDate) : "Now";
+        pill.innerHTML = `<i class="bi bi-calendar3"></i> ${start} — ${end}`;
+      }
+
+      function getFilteredCases() {
+        return allCases.filter((item) => {
+          const haystack = [
+            item.caseTitle,
+            item.caseNumber,
+            item.clientName,
+            item.courtName,
+            item.matterType,
+            item.status
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+
+          const matchesSearch = !dashboardFilters.search || haystack.includes(dashboardFilters.search.toLowerCase());
+          const matchesStatus = !dashboardFilters.statuses.size || dashboardFilters.statuses.has(item.status);
+          const matchesMatterType = dashboardFilters.matterType === "all" || String(item.matterType || "").toLowerCase() === dashboardFilters.matterType;
+
+          const caseDate = getCaseDate(item);
+          const startDate = dashboardFilters.startDate ? new Date(`${dashboardFilters.startDate}T00:00:00`) : null;
+          const endDate = dashboardFilters.endDate ? new Date(`${dashboardFilters.endDate}T23:59:59`) : null;
+          const matchesStart = !startDate || (caseDate && caseDate >= startDate);
+          const matchesEnd = !endDate || (caseDate && caseDate <= endDate);
+
+          return matchesSearch && matchesStatus && matchesMatterType && matchesStart && matchesEnd;
+        });
+      }
+
+      function buildReportText(cases) {
+        const lines = [
+          "LexiCourt Dashboard Report",
+          `Generated: ${new Date().toLocaleString("en-IN")}`,
+          `Visible matters: ${cases.length}`,
+          ""
+        ];
+
+        cases.forEach((item, index) => {
+          lines.push(
+            `${index + 1}. ${item.caseTitle || "Untitled matter"}`,
+            `   Case No: ${item.caseNumber || item.id || "—"}`,
+            `   Client: ${item.clientName || "—"}`,
+            `   Type: ${item.matterType || "—"}`,
+            `   Status: ${item.status || "—"}`,
+            `   Court: ${item.courtName || "—"}`,
+            `   Filed: ${formatFirestoreDate(item.filedDate || item.createdAt)}`,
+            `   Next Hearing: ${formatFirestoreDate(item.nextHearingDate)}`,
+            ""
+          );
+        });
+
+        return lines.join("\n");
+      }
+
+      function buildMonthlyCaseTrend(cases) {
+        const trend = [0, 0, 0, 0, 0, 0];
+        const now = new Date();
+
+        cases.forEach((item) => {
+          const rawDate = item.filedDate || item.createdAt;
+          const date = typeof rawDate?.toDate === "function" ? rawDate.toDate() : rawDate instanceof Date ? rawDate : rawDate ? new Date(rawDate) : null;
+          if (!date || Number.isNaN(date.getTime())) {
+            return;
+          }
+
+          const monthDelta = (now.getFullYear() - date.getFullYear()) * 12 + (now.getMonth() - date.getMonth());
+          if (monthDelta >= 0 && monthDelta < 6) {
+            trend[5 - monthDelta] += 1;
+          }
+        });
+
+        return trend;
+      }
+
+      function buildWinRateTrend(cases) {
+        const closed = cases.filter((item) => item.status === "Closed" || item.status === "Won").length;
+        const won = cases.filter((item) => item.status === "Won").length;
+        const baseRate = closed ? Math.round((won / closed) * 100) : 0;
+        return [0.72, 0.8, 0.92, 1.04, 1.08, 1].map((multiplier) => Math.max(0, Math.min(100, Math.round(baseRate * multiplier))));
+      }
+
+      function buildHearingTrend(cases) {
+        const trend = [0, 0, 0, 0, 0, 0];
+        const now = new Date();
+
+        cases.forEach((item) => {
+          const rawDate = item.nextHearingDate;
+          const date = typeof rawDate?.toDate === "function" ? rawDate.toDate() : rawDate instanceof Date ? rawDate : rawDate ? new Date(rawDate) : null;
+          if (!date || Number.isNaN(date.getTime())) {
+            return;
+          }
+
+          const monthDelta = (date.getFullYear() - now.getFullYear()) * 12 + (date.getMonth() - now.getMonth());
+          if (monthDelta >= 0 && monthDelta < 6) {
+            trend[monthDelta] += 1;
+          }
+        });
+
+        return trend;
+      }
+
+      function buildCaseTypeSplit(cases) {
+        const buckets = { Civil: 0, Criminal: 0, Family: 0, Corporate: 0 };
+        cases.forEach((item) => {
+          const type = String(item.matterType || "").toLowerCase();
+          if (type.includes("criminal")) buckets.Criminal += 1;
+          else if (type.includes("family")) buckets.Family += 1;
+          else if (type.includes("corporate")) buckets.Corporate += 1;
+          else buckets.Civil += 1;
+        });
+        return [buckets.Civil, buckets.Criminal, buckets.Family, buckets.Corporate];
+      }
+
+      function setEmptyDashboardState() {
+        document.getElementById("dashboardTotalCases").textContent = "0";
+        document.getElementById("dashboardActiveHearings").textContent = "0";
+        document.getElementById("dashboardActiveCaseCount").textContent = "0";
+        document.getElementById("dashboardDraftCount").textContent = "0";
+        document.getElementById("dashboardInsightText").textContent = "No matters are assigned yet. Create your first case to unlock case insights, documents, and drafting flow.";
+        document.getElementById("dashboardDraftBadge").textContent = "Awaiting first matter";
+        document.getElementById("dashboardWinRateValue").textContent = "0%";
+        document.getElementById("dashboardWinRateCopy").textContent = "No completed matters yet";
+        document.getElementById("dashboardHearingsCopy").textContent = "Upcoming hearings will appear here after you add matters with hearing dates.";
+        document.getElementById("dashboardCaseTypesCopy").textContent = "Case-type distribution will update once your workspace has live matters.";
+        window.lexiCourtCharts?.initDashboardCharts({
+          monthlyCaseFiled: [0, 0, 0, 0, 0, 0],
+          winRateTrend: [0, 0, 0, 0, 0, 0],
+          hearingsTrend: [0, 0, 0, 0, 0, 0],
+          caseTypeSplit: [0, 0, 0, 0]
+        });
+      }
+
+      function toIsoDate(value) {
+        if (!value) {
+          return null;
+        }
+        if (typeof value.toDate === "function") {
+          return value.toDate().toISOString();
+        }
+        const date = value instanceof Date ? value : new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date.toISOString();
+      }
+
+      function buildLocalInsightSummary(leadCase, documents, drafts, timelines, summaries) {
+        const docCount = documents.length;
+        const draftCount = drafts.length;
+        const timelineCount = timelines.length;
+        const summaryCount = summaries.length;
+
+        return `${leadCase.caseTitle || "Lead matter"} is currently ${String(leadCase.status || "active").toLowerCase()} with ${docCount} document record${docCount === 1 ? "" : "s"}, ${draftCount} draft${draftCount === 1 ? "" : "s"}, ${timelineCount} saved timeline${timelineCount === 1 ? "" : "s"}, and ${summaryCount} stored summar${summaryCount === 1 ? "y" : "ies"}.`;
+      }
+
+      function hydrateFilterModal() {
+        const searchInput = document.getElementById("dashboardSearchInput");
+        const matterTypeSelect = document.getElementById("dashboardMatterType");
+        const statusBoxes = document.querySelectorAll("[data-dashboard-status]");
+        const uniqueMatterTypes = [...new Set(allCases.map((item) => item.matterType).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
+        if (matterTypeSelect && !matterTypeSelect.dataset.hydrated) {
+          matterTypeSelect.innerHTML = [
+            `<option value="all">All matter types</option>`,
+            ...uniqueMatterTypes.map((type) => `<option value="${String(type).toLowerCase()}">${type}</option>`)
+          ].join("");
+          matterTypeSelect.dataset.hydrated = "true";
+        }
+
+        if (searchInput) {
+          searchInput.value = dashboardFilters.search;
+        }
+
+        if (matterTypeSelect) {
+          matterTypeSelect.value = dashboardFilters.matterType;
+        }
+
+        statusBoxes.forEach((checkbox) => {
+          checkbox.checked = dashboardFilters.statuses.has(checkbox.value);
+        });
+
+        const startInput = document.getElementById("dashboardStartDate");
+        const endInput = document.getElementById("dashboardEndDate");
+        if (startInput) {
+          startInput.value = dashboardFilters.startDate;
+        }
+        if (endInput) {
+          endInput.value = dashboardFilters.endDate;
+        }
+      }
+
+      async function renderDashboard() {
+        const cases = getFilteredCases();
+        const activeCases = cases.filter((c) => c.status === "Active" || c.status === "Pending").length;
+        const activeHearings = cases.filter((c) => c.nextHearingDate).length;
+
+        document.getElementById("dashboardTotalCases").textContent = String(cases.length || 0);
+        document.getElementById("dashboardActiveHearings").textContent = String(activeHearings || 0);
+        document.getElementById("dashboardActiveCaseCount").textContent = String(activeCases || 0);
+
+        const winRate = buildWinRateTrend(cases);
+        const hearingTrend = buildHearingTrend(cases);
+        const caseTypeSplit = buildCaseTypeSplit(cases);
+        document.getElementById("dashboardWinRateValue").textContent = `${winRate[5] || 0}%`;
+        document.getElementById("dashboardWinRateCopy").textContent = cases.some((item) => item.status === "Closed" || item.status === "Won")
+          ? "Completed matters across your live workspace"
+          : "Win trend will appear after completed matters are recorded";
+        document.getElementById("dashboardHearingsCopy").textContent = activeHearings
+          ? "Upcoming hearing volume across the next six months"
+          : "Add next hearing dates to populate the hearing trend";
+        document.getElementById("dashboardCaseTypesCopy").textContent = cases.length
+          ? `Civil ${caseTypeSplit[0]}, Criminal ${caseTypeSplit[1]}, Family ${caseTypeSplit[2]}, Corporate ${caseTypeSplit[3]}`
+          : "Case-type distribution will appear once you add matters";
+        window.lexiCourtCharts?.initDashboardCharts({
+          monthlyCaseFiled: buildMonthlyCaseTrend(cases),
+          winRateTrend: winRate,
+          hearingsTrend: hearingTrend,
+          caseTypeSplit
+        });
+
+        const leadCase = cases.find((item) => item.status === "Active") || cases[0];
+        if (!leadCase) {
+          setEmptyDashboardState();
+          return;
+        }
+
+        const [documents, drafts, timelines, summaries, chats] = await Promise.all([
+          getDocumentsByCase(leadCase.id),
+          getDraftsByCase(leadCase.id),
+          getTimelineByCase(leadCase.id),
+          getSummariesByCase(leadCase.id),
+          getAiChatsByCase(leadCase.id)
+        ]);
+
+        document.getElementById("dashboardDraftCount").textContent = String(drafts.length || 0);
+
+        let insights = {
+          urgency: "Stable",
+          summary: buildLocalInsightSummary(leadCase, documents, drafts, timelines, summaries)
+        };
+
+        try {
+          const insightResponse = await fetchCaseInsights({
+            caseData: {
+              id: leadCase.id,
+              caseId: leadCase.caseId || leadCase.id,
+              caseNumber: leadCase.caseNumber || leadCase.caseId || leadCase.id,
+              caseTitle: leadCase.caseTitle,
+              matterType: leadCase.matterType,
+              courtName: leadCase.courtName,
+              status: leadCase.status,
+              createdAt: toIsoDate(leadCase.createdAt),
+              updatedAt: toIsoDate(leadCase.updatedAt),
+              nextHearingDate: toIsoDate(leadCase.nextHearingDate)
+            },
+            documents,
+            drafts,
+            timelines,
+            summaries,
+            chats
+          });
+
+          if (insightResponse.insights) {
+            insights = insightResponse.insights;
+          }
+        } catch (insightError) {
+          console.error("Using local dashboard insight fallback:", insightError);
+        }
+
+        document.getElementById("dashboardInsightText").textContent = insights.summary || "AI insights are being prepared for the lead case.";
+        document.getElementById("dashboardDraftBadge").textContent = insights.urgency ? `${insights.urgency} priority` : "Stable output";
+
+        try {
+          await saveMlPrediction({
+            caseId: leadCase.id,
+            predictionType: "case_insights",
+            payload: insights,
+            modelName: "lexicourt-ml"
+          });
+        } catch (predictionError) {
+          console.error("Unable to save dashboard insights:", predictionError);
+        }
+
+        try {
+          const summaryResponse = await generateSummaryFromApi({
+            caseData: {
+              id: leadCase.id,
+              caseId: leadCase.caseId || leadCase.id,
+              caseNumber: leadCase.caseNumber || leadCase.caseId || leadCase.id,
+              caseTitle: leadCase.caseTitle,
+              matterType: leadCase.matterType,
+              courtName: leadCase.courtName,
+              status: leadCase.status,
+              createdAt: toIsoDate(leadCase.createdAt),
+              updatedAt: toIsoDate(leadCase.updatedAt),
+              nextHearingDate: toIsoDate(leadCase.nextHearingDate)
+            },
+            documents
+          });
+
+          if (summaryResponse.summary) {
+            document.getElementById("dashboardInsightText").textContent = summaryResponse.summary;
+          }
+        } catch (summaryError) {
+          console.error(summaryError);
+        }
+      }
+
+      protectPage(["lawyer", "admin"], async (user, profile) => {
+        document.body.style.display = 'block';
+        initSharedUI();
+
+        try {
+           allCases = await getCasesForCurrentUser();
+           hydrateFilterModal();
+           updateDateRangeLabel();
+           await renderDashboard();
+
+           document.getElementById("dashboardOpenFiltersBtn")?.addEventListener("click", () => {
+             hydrateFilterModal();
+             bootstrap.Modal.getOrCreateInstance(document.getElementById("dashboardFiltersModal")).show();
+           });
+
+           document.getElementById("dashboardDateRangeBtn")?.addEventListener("click", () => {
+             hydrateFilterModal();
+             bootstrap.Modal.getOrCreateInstance(document.getElementById("dashboardDateModal")).show();
+           });
+
+           document.getElementById("dashboardApplyFiltersBtn")?.addEventListener("click", async () => {
+             const selectedStatuses = [...document.querySelectorAll("[data-dashboard-status]:checked")].map((item) => item.value);
+             dashboardFilters.search = document.getElementById("dashboardSearchInput")?.value.trim() || "";
+             dashboardFilters.matterType = document.getElementById("dashboardMatterType")?.value || "all";
+             dashboardFilters.statuses = new Set(selectedStatuses);
+             bootstrap.Modal.getInstance(document.getElementById("dashboardFiltersModal"))?.hide();
+             await renderDashboard();
+           });
+
+           document.getElementById("dashboardResetFiltersBtn")?.addEventListener("click", async () => {
+             dashboardFilters.search = "";
+             dashboardFilters.matterType = "all";
+             dashboardFilters.statuses = new Set();
+             hydrateFilterModal();
+             await renderDashboard();
+           });
+
+           document.getElementById("dashboardApplyDateBtn")?.addEventListener("click", async () => {
+             const startDate = document.getElementById("dashboardStartDate")?.value || "";
+             const endDate = document.getElementById("dashboardEndDate")?.value || "";
+
+             if (startDate && endDate && startDate > endDate) {
+               alert("The start date cannot be later than the end date.");
+               return;
+             }
+
+             dashboardFilters.startDate = startDate;
+             dashboardFilters.endDate = endDate;
+             updateDateRangeLabel();
+             bootstrap.Modal.getInstance(document.getElementById("dashboardDateModal"))?.hide();
+             await renderDashboard();
+           });
+
+           document.getElementById("dashboardResetDateBtn")?.addEventListener("click", async () => {
+             dashboardFilters.startDate = "";
+             dashboardFilters.endDate = "";
+             hydrateFilterModal();
+             updateDateRangeLabel();
+             await renderDashboard();
+           });
+
+           document.getElementById("dashboardGenerateReportBtn")?.addEventListener("click", () => {
+             const reportText = buildReportText(getFilteredCases());
+             downloadTextPdf({
+               filename: `lexicourt-dashboard-report-${toDateInputValue(new Date()) || "today"}.pdf`,
+               title: "LexiCourt Dashboard Report",
+               subtitle: `Generated ${new Date().toLocaleString("en-IN")}`,
+               body: reportText
+             });
+           });
+        } catch(e) { console.error(e); }
+      });
+    </script>
+    <style>body { display: none; }</style>
   </head>
-  <body data-page="dashboard">
+  <body class="workspace-page" data-page="dashboard">
     <main class="page-shell">
       <header class="topbar">
         <a href="dashboard.html" class="brand-wrap">
@@ -36,19 +481,22 @@
           <a class="nav-link-pill" href="case-detail.html"><i class="bi bi-folder2-open"></i> Documents</a>
           <a class="nav-link-pill" href="assistant.html"><i class="bi bi-stars"></i> AI Assistant</a>
           <a class="nav-link-pill" href="drafts.html"><i class="bi bi-file-earmark-richtext"></i> Drafts</a>
-          <a class="nav-link-pill" href="#" onclick="lexiCourtUtils.comingSoon(event, 'Settings arrive in Phase 2.');"><i class="bi bi-gear"></i> Settings</a>
+          <a class="nav-link-pill" href="settings.html"><i class="bi bi-gear"></i> Settings</a>
         </nav>
         <div class="nav-actions">
-          <button class="icon-button" type="button" data-coming-soon="Notifications arrive in Phase 2.">
+          <button class="icon-button" type="button" data-notification-trigger="true">
             <i class="bi bi-bell"></i>
           </button>
           <a class="avatar-chip" href="client-dashboard.html">
-            <span class="avatar-photo">JS</span>
+            <span class="avatar-photo">U</span>
             <span class="avatar-copy">
-              <strong>Jaskirat</strong>
-              <span>Lawyer</span>
+              <strong id="navUserName">User Name</strong>
+              <span id="navUserRole">Role</span>
             </span>
           </a>
+          <button id="logoutBtn" class="btn btn-outline-danger btn-sm p-1 ms-2" type="button" style="border:none;" title="Logout">
+             <i class="bi bi-box-arrow-right"></i>
+          </button>
         </div>
       </header>
 
@@ -61,14 +509,14 @@
           </p>
         </div>
         <div class="header-tools">
-          <button class="icon-button" type="button" data-coming-soon="Search will be connected to live case data in Phase 2.">
+          <button id="dashboardOpenFiltersBtn" class="icon-button" type="button" title="Search and filters">
             <i class="bi bi-search"></i>
           </button>
-          <button class="icon-button" type="button" data-coming-soon="Advanced filters arrive in Phase 2.">
+          <button id="dashboardOpenFiltersBtnSecondary" class="icon-button" type="button" title="Advanced filters" onclick="document.getElementById('dashboardOpenFiltersBtn').click()">
             <i class="bi bi-sliders"></i>
           </button>
-          <span class="date-pill"><i class="bi bi-calendar3"></i> 01 Jan 2026 — 31 Dec 2026</span>
-          <button class="btn-dark" type="button" data-coming-soon="Report generation arrives in Phase 2.">Generate Report</button>
+          <button id="dashboardDateRangeBtn" class="date-pill" type="button"><i class="bi bi-calendar3"></i> All dates</button>
+          <button id="dashboardGenerateReportBtn" class="btn-dark" type="button">Generate Report</button>
         </div>
       </section>
 
@@ -97,23 +545,22 @@
             <div class="summary-grid">
               <div class="summary-metric">
                 <span class="label-copy">Total Cases</span>
-                <div class="metric-big">24</div>
-                <span class="small-dark-pill">+4 this month</span>
+                <div id="dashboardTotalCases" class="metric-big">0</div>
+                <span class="small-dark-pill">Live workspace</span>
               </div>
               <div class="summary-metric">
                 <span class="label-copy">Active Hearings</span>
-                <div class="metric-big">11</div>
-                <span class="small-dark-pill">2 this week</span>
+                <div id="dashboardActiveHearings" class="metric-big">0</div>
+                <span class="small-dark-pill">Upcoming hearings</span>
               </div>
               <div class="summary-metric">
                 <span class="label-copy">Drafts Generated</span>
-                <div class="metric-big">36</div>
-                <span class="small-dark-pill">Stable output</span>
+                <div id="dashboardDraftCount" class="metric-big">0</div>
+                <span id="dashboardDraftBadge" class="small-dark-pill">Awaiting first matter</span>
               </div>
             </div>
-            <p class="body-copy" style="color: #555555;">
-              Overall case readiness remains strong for April 2026. Sharma vs State of Delhi
-              is fully updated with the last order and witness statement set.
+            <p id="dashboardInsightText" class="body-copy" style="color: #555555;">
+              No matters are assigned yet. Create your first case to unlock case insights, documents, and drafting flow.
             </p>
           </div>
         </article>
@@ -126,7 +573,7 @@
             </div>
             <span class="expand-chip"><i class="bi bi-arrow-up-right"></i></span>
           </div>
-          <p class="metric-big">24</p>
+          <p id="dashboardActiveCaseCount" class="metric-big">0</p>
           <span class="metric-label">Across all active matters</span>
           <div class="chart-wrap"><canvas id="activeCasesChart"></canvas></div>
         </article>
@@ -139,8 +586,8 @@
             </div>
             <span class="expand-chip"><i class="bi bi-arrow-up-right"></i></span>
           </div>
-          <p class="metric-big">68%</p>
-          <span class="metric-label">Completed matters across 2026</span>
+          <p id="dashboardWinRateValue" class="metric-big">0%</p>
+          <span id="dashboardWinRateCopy" class="metric-label">No completed matters yet</span>
           <div class="chart-wrap"><canvas id="winRateChart"></canvas></div>
         </article>
 
@@ -152,9 +599,8 @@
             </div>
             <span class="expand-chip"><i class="bi bi-arrow-up-right"></i></span>
           </div>
-          <p class="body-copy">
-            Hearings handled this quarter remain steady, with argument-heavy criminal matters
-            driving the uptick through June.
+          <p id="dashboardHearingsCopy" class="body-copy">
+            Upcoming hearings will appear here after you add matters with hearing dates.
           </p>
           <div class="chart-wrap tall"><canvas id="hearingChart"></canvas></div>
         </article>
@@ -167,10 +613,83 @@
             </div>
             <span class="expand-chip"><i class="bi bi-arrow-up-right"></i></span>
           </div>
-          <p class="body-copy">Civil 32%, Criminal 47%, Family 13%, Corporate 8%</p>
+          <p id="dashboardCaseTypesCopy" class="body-copy">Case-type distribution will update once your workspace has live matters.</p>
           <div class="chart-wrap"><canvas id="caseTypeChart"></canvas></div>
         </article>
       </section>
+
+      <div class="modal fade" id="dashboardFiltersModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content">
+            <div class="modal-header">
+              <div>
+                <span class="document-modal-kicker">Live dashboard</span>
+                <h2 class="card-title mb-0">Search and Filters</h2>
+              </div>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <p class="document-modal-copy">Refine the dashboard to the matters you want to inspect right now.</p>
+              <div class="form-grid dashboard-filter-grid">
+                <div style="grid-column: 1 / -1;">
+                  <label class="section-label" for="dashboardSearchInput">Search matters</label>
+                  <input class="app-input" id="dashboardSearchInput" type="search" placeholder="Search by case title, number, client, court, or status" />
+                </div>
+                <div>
+                  <label class="section-label" for="dashboardMatterType">Matter Type</label>
+                  <select class="app-select" id="dashboardMatterType">
+                    <option value="all">All matter types</option>
+                  </select>
+                </div>
+                <div>
+                  <span class="section-label">Status</span>
+                  <div class="dashboard-status-group">
+                    <label class="dashboard-check"><input data-dashboard-status type="checkbox" value="Active" /> <span>Active</span></label>
+                    <label class="dashboard-check"><input data-dashboard-status type="checkbox" value="Pending" /> <span>Pending</span></label>
+                    <label class="dashboard-check"><input data-dashboard-status type="checkbox" value="Closed" /> <span>Closed</span></label>
+                    <label class="dashboard-check"><input data-dashboard-status type="checkbox" value="Won" /> <span>Won</span></label>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button id="dashboardResetFiltersBtn" class="btn-dark" type="button">Reset</button>
+              <button id="dashboardApplyFiltersBtn" class="btn-accent" type="button">Apply Filters</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal fade" id="dashboardDateModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content">
+            <div class="modal-header">
+              <div>
+                <span class="document-modal-kicker">Timeline window</span>
+                <h2 class="card-title mb-0">Date Range</h2>
+              </div>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+              <p class="document-modal-copy">Filter dashboard analytics by filed date so the charts and insights reflect the window you choose.</p>
+              <div class="form-grid dashboard-filter-grid">
+                <div>
+                  <label class="section-label" for="dashboardStartDate">Start Date</label>
+                  <input class="app-input" id="dashboardStartDate" type="date" />
+                </div>
+                <div>
+                  <label class="section-label" for="dashboardEndDate">End Date</label>
+                  <input class="app-input" id="dashboardEndDate" type="date" />
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button id="dashboardResetDateBtn" class="btn-dark" type="button">Reset</button>
+              <button id="dashboardApplyDateBtn" class="btn-accent" type="button">Apply Range</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>

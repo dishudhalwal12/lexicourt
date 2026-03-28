@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Cases | LexiCourt</title>
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -19,8 +20,174 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
     />
     <link rel="stylesheet" href="css/main.css" />
+    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module">
+      import { protectPage } from "./js/auth-guard.js";
+      import { initSharedUI } from "./js/page-init.js";
+      import {
+        getCasesForCurrentUser,
+        getCaseById,
+        createCase,
+        updateCase,
+        buildCaseUrl,
+        formatFirestoreDate
+      } from "./js/firestore-service.js";
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function toDateInputValue(value) {
+        if (!value) {
+          return "";
+        }
+
+        const date = typeof value.toDate === "function" ? value.toDate() : value instanceof Date ? value : new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return "";
+        }
+
+        return date.toISOString().slice(0, 10);
+      }
+
+      function normalizeCasePayload(formData, existingCase = null) {
+        const filedDate = formData.get("filedDate");
+        const nextHearingDate = formData.get("nextHearingDate");
+        const tags = String(formData.get("tags") || "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
+
+        return {
+          caseNumber: String(formData.get("caseNumber") || "").trim(),
+          caseTitle: String(formData.get("caseTitle") || "").trim(),
+          matterType: String(formData.get("matterType") || "").trim(),
+          courtName: String(formData.get("courtName") || "").trim(),
+          clientName: String(formData.get("clientName") || "").trim(),
+          oppositeParty: String(formData.get("oppositeParty") || "").trim(),
+          status: String(formData.get("status") || "Active").trim(),
+          notes: String(formData.get("notes") || "").trim(),
+          tags,
+          filedDate: filedDate ? new Date(`${filedDate}T00:00:00`) : existingCase?.filedDate || existingCase?.createdAt || null,
+          nextHearingDate: nextHearingDate ? new Date(`${nextHearingDate}T00:00:00`) : null
+        };
+      }
+
+      async function loadCases() {
+        const rawCases = await getCasesForCurrentUser();
+        window.rawCases = rawCases;
+        window.realCases = rawCases.map((c) => ({
+          id: c.id,
+          caseId: c.caseNumber || c.id,
+          caseTitle: c.caseTitle,
+          clientName: c.clientName,
+          caseType: c.matterType,
+          court: c.courtName,
+          status: c.status,
+          filedDate: formatFirestoreDate(c.filedDate || c.createdAt, "N/A"),
+          nextHearing: formatFirestoreDate(c.nextHearingDate, "None"),
+          detailUrl: buildCaseUrl("case-detail.html", c.id)
+        }));
+
+        if (window.renderRows) {
+          window.renderRows();
+        }
+      }
+
+      function resetCaseForm() {
+        const form = document.getElementById("caseModalForm");
+        form?.reset();
+        document.getElementById("caseModalCaseId").value = "";
+        document.getElementById("caseModalTitle").textContent = "Create New Case";
+        document.getElementById("caseModalSubmit").textContent = "Save Case";
+      }
+
+      window.openCaseModal = async function(caseId = "") {
+        resetCaseForm();
+        const form = document.getElementById("caseModalForm");
+
+        if (caseId) {
+          const activeCase =
+            (window.rawCases || []).find((item) => item.id === caseId) ||
+            (await getCaseById(caseId));
+
+          if (activeCase && form) {
+            document.getElementById("caseModalCaseId").value = activeCase.id;
+            document.getElementById("caseModalTitle").textContent = "Edit Case";
+            document.getElementById("caseModalSubmit").textContent = "Update Case";
+
+            form.caseNumber.value = activeCase.caseNumber || "";
+            form.caseTitle.value = activeCase.caseTitle || "";
+            form.matterType.value = activeCase.matterType || "";
+            form.courtName.value = activeCase.courtName || "";
+            form.clientName.value = activeCase.clientName || "";
+            form.oppositeParty.value = activeCase.oppositeParty || "";
+            form.status.value = activeCase.status || "Active";
+            form.filedDate.value = toDateInputValue(activeCase.filedDate || activeCase.createdAt);
+            form.nextHearingDate.value = toDateInputValue(activeCase.nextHearingDate);
+            form.tags.value = Array.isArray(activeCase.tags) ? activeCase.tags.join(", ") : "";
+            form.notes.value = activeCase.notes || "";
+          }
+        }
+
+        const modalElement = document.getElementById("caseModal");
+        const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+        modal.show();
+      };
+
+      protectPage(["lawyer", "admin"], async (user, profile) => {
+        document.body.style.display = 'block';
+        initSharedUI();
+
+        try {
+          const form = document.getElementById("caseModalForm");
+          const submitButton = document.getElementById("caseModalSubmit");
+
+          form?.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const caseId = document.getElementById("caseModalCaseId").value;
+            const formData = new FormData(form);
+
+            submitButton.disabled = true;
+            submitButton.textContent = caseId ? "Updating..." : "Saving...";
+
+            try {
+              const existingCase = caseId ? await getCaseById(caseId) : null;
+              const payload = normalizeCasePayload(formData, existingCase);
+
+              if (!payload.caseNumber || !payload.caseTitle || !payload.matterType || !payload.courtName || !payload.clientName) {
+                throw new Error("Please complete the core case fields before saving.");
+              }
+
+              if (caseId) {
+                await updateCase(caseId, payload);
+              } else {
+                await createCase(payload);
+              }
+
+              bootstrap.Modal.getInstance(document.getElementById("caseModal"))?.hide();
+              await loadCases();
+            } catch (error) {
+              console.error(error);
+              alert(error.message || "Unable to save the case right now.");
+            } finally {
+              submitButton.disabled = false;
+              submitButton.textContent = caseId ? "Update Case" : "Save Case";
+            }
+          });
+
+          await loadCases();
+        } catch(e) { console.error(e); }
+      });
+    </script>
+    <style>body { display: none; }</style>
   </head>
-  <body>
+  <body class="workspace-page">
     <main class="page-shell">
       <header class="topbar">
         <a href="dashboard.html" class="brand-wrap">
@@ -36,19 +203,22 @@
           <a class="nav-link-pill" href="case-detail.html"><i class="bi bi-folder2-open"></i> Documents</a>
           <a class="nav-link-pill" href="assistant.html"><i class="bi bi-stars"></i> AI Assistant</a>
           <a class="nav-link-pill" href="drafts.html"><i class="bi bi-file-earmark-richtext"></i> Drafts</a>
-          <a class="nav-link-pill" href="#" onclick="lexiCourtUtils.comingSoon(event, 'Settings arrive in Phase 2.');"><i class="bi bi-gear"></i> Settings</a>
+          <a class="nav-link-pill" href="settings.html"><i class="bi bi-gear"></i> Settings</a>
         </nav>
         <div class="nav-actions">
-          <button class="icon-button" type="button" data-coming-soon="Notifications arrive in Phase 2.">
+          <button class="icon-button" type="button" data-notification-trigger="true">
             <i class="bi bi-bell"></i>
           </button>
           <a class="avatar-chip" href="client-dashboard.html">
-            <span class="avatar-photo">JS</span>
+            <span class="avatar-photo">U</span>
             <span class="avatar-copy">
-              <strong>Jaskirat</strong>
-              <span>Lawyer</span>
+              <strong id="navUserName">User Name</strong>
+              <span id="navUserRole">Role</span>
             </span>
           </a>
+          <button id="logoutBtn" class="btn btn-outline-danger btn-sm p-1 ms-2" type="button" style="border:none;" title="Logout">
+             <i class="bi bi-box-arrow-right"></i>
+          </button>
         </div>
       </header>
 
@@ -66,7 +236,7 @@
           <div style="flex: 1; min-width: 240px;">
             <input id="caseSearch" class="search-input" type="search" placeholder="Search by case, client, or court" />
           </div>
-          <button class="btn-accent" type="button" data-coming-soon="Case creation arrives in Phase 2.">New Case</button>
+          <button class="btn-accent" type="button" onclick="window.openCaseModal()">New Case</button>
         </div>
 
         <div class="filter-row mb-4">
@@ -95,7 +265,83 @@
           </table>
         </div>
       </section>
+
     </main>
+
+    <div class="modal fade case-record-modal" id="caseModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content case-modal-content">
+          <div class="modal-header case-modal-header">
+            <div>
+              <span class="document-modal-kicker">Case Workspace</span>
+              <h2 id="caseModalTitle" class="card-title mb-0">Create New Case</h2>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <form id="caseModalForm">
+            <div class="modal-body case-modal-body">
+              <input id="caseModalCaseId" type="hidden" />
+              <p class="document-modal-copy">Set up the matter with its court, parties, hearing dates, and internal notes so the workspace stays structured from day one.</p>
+              <div class="form-grid">
+                <div>
+                  <label class="section-label" for="caseNumber">Case Number</label>
+                  <input class="app-input" id="caseNumber" name="caseNumber" type="text" placeholder="CRL.A. 144/2025" required />
+                </div>
+                <div>
+                  <label class="section-label" for="caseTitle">Case Title</label>
+                  <input class="app-input" id="caseTitle" name="caseTitle" type="text" placeholder="Sharma vs State of Delhi" required />
+                </div>
+                <div>
+                  <label class="section-label" for="matterType">Matter Type</label>
+                  <input class="app-input" id="matterType" name="matterType" type="text" placeholder="Criminal" required />
+                </div>
+                <div>
+                  <label class="section-label" for="courtName">Court</label>
+                  <input class="app-input" id="courtName" name="courtName" type="text" placeholder="Delhi High Court" required />
+                </div>
+                <div>
+                  <label class="section-label" for="clientName">Client Name</label>
+                  <input class="app-input" id="clientName" name="clientName" type="text" placeholder="Rohit Sharma" required />
+                </div>
+                <div>
+                  <label class="section-label" for="oppositeParty">Opposite Party</label>
+                  <input class="app-input" id="oppositeParty" name="oppositeParty" type="text" placeholder="State of Delhi" />
+                </div>
+                <div>
+                  <label class="section-label" for="status">Status</label>
+                  <select class="app-select" id="status" name="status">
+                    <option value="Active">Active</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Closed">Closed</option>
+                    <option value="Won">Won</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="section-label" for="filedDate">Filed Date</label>
+                  <input class="app-input" id="filedDate" name="filedDate" type="date" />
+                </div>
+                <div>
+                  <label class="section-label" for="nextHearingDate">Next Hearing</label>
+                  <input class="app-input" id="nextHearingDate" name="nextHearingDate" type="date" />
+                </div>
+                <div>
+                  <label class="section-label" for="tags">Tags</label>
+                  <input class="app-input" id="tags" name="tags" type="text" placeholder="Bail, Urgent, Appeal" />
+                </div>
+                <div style="grid-column: 1 / -1;">
+                  <label class="section-label" for="notes">Notes</label>
+                  <textarea class="app-textarea" id="notes" name="notes" placeholder="Add matter notes, filing context, or hearing prep instructions."></textarea>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer case-modal-footer">
+              <button class="btn-dark" type="button" data-bs-dismiss="modal">Cancel</button>
+              <button id="caseModalSubmit" class="btn-accent" type="submit">Save Case</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="js/data.js"></script>
@@ -104,45 +350,69 @@
         const searchInput = document.getElementById("caseSearch");
         const filters = document.querySelectorAll("[data-filter]");
         let activeFilter = "All";
+        window.realCases = null;
 
         function renderRows() {
           const query = searchInput.value.trim().toLowerCase();
           const body = document.getElementById("casesTableBody");
-          const rows = window.lexiCourtData.cases
+          const sourceData = Array.isArray(window.realCases) ? window.realCases : null;
+
+          if (!sourceData) {
+            body.innerHTML = `
+              <tr>
+                <td colspan="8" class="metric-label" style="padding: 24px;">
+                  Loading your live matters...
+                </td>
+              </tr>
+            `;
+            return;
+          }
+          const filteredRows = sourceData
             .filter((item) => {
               const matchesFilter = activeFilter === "All" || item.status === activeFilter;
               const haystack = [item.caseId, item.caseTitle, item.clientName, item.caseType, item.court]
                 .join(" ")
                 .toLowerCase();
               return matchesFilter && haystack.includes(query);
-            })
-            .map(
+            });
+
+          if (!filteredRows.length) {
+            body.innerHTML = `
+              <tr>
+                <td colspan="8" class="metric-label" style="padding: 24px;">
+                  No matters match the current search or filter. Create a new case to begin tracking it in LexiCourt.
+                </td>
+              </tr>
+            `;
+            return;
+          }
+
+          const rows = filteredRows.map(
               (item) => `
-                <tr class="clickable-row" data-href="case-detail.html">
-                  <td><span class="table-case-title">${item.caseId}</span></td>
+                <tr class="clickable-row" data-href="${item.detailUrl || "case-detail.html"}">
+                  <td><span class="table-case-title">${escapeHtml(item.caseId)}</span></td>
                   <td>
-                    <div class="table-case-title">${item.clientName}</div>
-                    <div class="metric-label">${item.caseTitle}</div>
+                    <div class="table-case-title">${escapeHtml(item.clientName)}</div>
+                    <div class="metric-label">${escapeHtml(item.caseTitle)}</div>
                   </td>
-                  <td>${item.caseType}</td>
-                  <td>${item.court}</td>
+                  <td>${escapeHtml(item.caseType)}</td>
+                  <td>${escapeHtml(item.court)}</td>
                   <td>${window.lexiCourtUtils.statusBadge(item.status)}</td>
-                  <td>${item.filedDate}</td>
-                  <td>${item.nextHearing}</td>
+                  <td>${escapeHtml(item.filedDate)}</td>
+                  <td>${escapeHtml(item.nextHearing)}</td>
                   <td>
                     <div class="action-group">
-                      <button class="action-chip" type="button" onclick="event.stopPropagation(); window.location.href='case-detail.html';">
+                      <button class="action-chip" type="button" onclick="event.stopPropagation(); window.location.href='${item.detailUrl || "case-detail.html"}';">
                         <i class="bi bi-eye"></i>
                       </button>
-                      <button class="action-chip" type="button" onclick="event.stopPropagation(); lexiCourtUtils.comingSoon(event, 'Edit workflow arrives in Phase 2.');">
+                      <button class="action-chip" type="button" onclick="event.stopPropagation(); window.openCaseModal('${item.id}');">
                         <i class="bi bi-pencil-square"></i>
                       </button>
                     </div>
                   </td>
                 </tr>
               `
-            )
-            .join("");
+            ).join("");
 
           body.innerHTML = rows;
           body.querySelectorAll(".clickable-row").forEach((row) => {
@@ -163,6 +433,7 @@
 
         searchInput.addEventListener("input", renderRows);
         renderRows();
+        window.renderRows = renderRows;
       });
     </script>
   </body>

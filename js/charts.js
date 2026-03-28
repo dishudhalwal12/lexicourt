@@ -1,15 +1,15 @@
 (function () {
-  const accent = "#111111";
-  const accentSoft = "#2f2f2f";
-  const mutedBar = "#e8e8e8";
-  const lineSoft = "#8b8b8b";
-  const gridLine = "rgba(17,17,17,0.06)";
+  const accent = "#f5f5f7";
+  const accentSoft = "#d8dbe4";
+  const mutedBar = "#1b1c24";
+  const lineSoft = "#aeb3bf";
+  const gridLine = "rgba(255,255,255,0.06)";
 
   function baseTooltip() {
     return {
-      backgroundColor: "#111111",
-      titleColor: "#ffffff",
-      bodyColor: "#ffffff",
+      backgroundColor: "#f5f5f7",
+      titleColor: "#07070a",
+      bodyColor: "#07070a",
       displayColors: false,
       cornerRadius: 14,
       padding: 12,
@@ -23,7 +23,7 @@
       x: {
         grid: { display: false },
         border: { display: false },
-        ticks: { color: "#8a8a8a", font: { size: 11 } }
+        ticks: { color: "#8e91a1", font: { size: 11 } }
       },
       y: {
         grid: { color: gridLine },
@@ -38,8 +38,64 @@
     return canvas ? canvas.getContext("2d") : null;
   }
 
-  function buildBarChart(id, data) {
+  function destroyExistingChart(id) {
     const ctx = getCtx(id);
+    if (!ctx || typeof Chart === "undefined") {
+      return null;
+    }
+
+    const existing = Chart.getChart(ctx.canvas);
+    if (existing) {
+      existing.destroy();
+    }
+
+    return ctx;
+  }
+
+  function markChartReady(id) {
+    const canvas = document.getElementById(id);
+    const wrap = canvas?.closest(".chart-wrap");
+    if (!wrap) {
+      return;
+    }
+
+    wrap.classList.remove("is-loading");
+    wrap.classList.add("is-ready");
+  }
+
+  function animationConfig(type) {
+    if (type === "doughnut") {
+      return {
+        duration: 1100,
+        easing: "easeOutQuart",
+        animateRotate: true,
+        animateScale: true,
+        delay(context) {
+          return (context.dataIndex || 0) * 80;
+        },
+        onComplete() {
+          markChartReady(this.canvas.id);
+        }
+      };
+    }
+
+    return {
+      duration: 900,
+      easing: "easeOutQuart",
+      delay(context) {
+        if (context.type !== "data") {
+          return 0;
+        }
+        return (context.dataIndex || 0) * 70;
+      },
+      onComplete() {
+        markChartReady(this.canvas.id);
+      }
+    };
+  }
+
+  function buildBarChart(id, data) {
+    const ctx = destroyExistingChart(id);
     if (!ctx || typeof Chart === "undefined") {
       return;
     }
@@ -59,6 +115,7 @@
       },
       options: {
         maintainAspectRatio: false,
+        animation: animationConfig("bar"),
         plugins: {
           legend: { display: false },
           tooltip: baseTooltip()
@@ -69,14 +126,14 @@
   }
 
   function buildAreaChart(id, data, lineColor, fillColor) {
-    const ctx = getCtx(id);
+    const ctx = destroyExistingChart(id);
     if (!ctx || typeof Chart === "undefined") {
       return;
     }
 
     const gradient = ctx.createLinearGradient(0, 0, 0, 280);
-    gradient.addColorStop(0, fillColor || "rgba(17,17,17,0.12)");
-    gradient.addColorStop(1, "rgba(17,17,17,0.01)");
+    gradient.addColorStop(0, fillColor || "rgba(245,245,247,0.16)");
+    gradient.addColorStop(1, "rgba(245,245,247,0.01)");
 
     new Chart(ctx, {
       type: "line",
@@ -98,6 +155,7 @@
       },
       options: {
         maintainAspectRatio: false,
+        animation: animationConfig("line"),
         plugins: {
           legend: { display: false },
           tooltip: baseTooltip()
@@ -108,7 +166,7 @@
   }
 
   function buildDoughnutChart(id, data) {
-    const ctx = getCtx(id);
+    const ctx = destroyExistingChart(id);
     if (!ctx || typeof Chart === "undefined") {
       return;
     }
@@ -120,7 +178,7 @@
         datasets: [
           {
             data,
-            backgroundColor: ["#111111", "#3b3b3b", "#8b8b8b", "#d4d4d4"],
+            backgroundColor: ["#f5f5f7", "#cfd3dc", "#848997", "#353844"],
             borderWidth: 0,
             hoverOffset: 4
           }
@@ -129,11 +187,12 @@
       options: {
         maintainAspectRatio: false,
         cutout: "62%",
+        animation: animationConfig("doughnut"),
         plugins: {
           legend: {
             position: "bottom",
             labels: {
-              color: "#666666",
+              color: "#9d9ead",
               usePointStyle: true,
               boxWidth: 8,
               padding: 18
@@ -145,30 +204,24 @@
     });
   }
 
-  function initDashboardCharts() {
-    buildBarChart("activeCasesChart", window.lexiCourtData.monthlyCaseFiled);
-    buildAreaChart("winRateChart", window.lexiCourtData.winRateTrend, accent, "rgba(17,17,17,0.14)");
-    buildAreaChart("hearingChart", window.lexiCourtData.hearingsTrend, lineSoft, "rgba(17,17,17,0.08)");
-    buildDoughnutChart("caseTypeChart", window.lexiCourtData.caseTypeSplit);
+  function zeroSeries(length) {
+    return Array.from({ length }, () => 0);
   }
 
-  function initAdminCharts() {
-    buildBarChart("adminCasesChart", [10, 12, 14, 16, 17, 18]);
-    buildAreaChart("adminUsersChart", [4, 5, 5, 7, 8, 8], accentSoft, "rgba(17,17,17,0.1)");
+  function initDashboardCharts(data = {}) {
+    buildBarChart("activeCasesChart", data.monthlyCaseFiled || zeroSeries(6));
+    buildAreaChart("winRateChart", data.winRateTrend || zeroSeries(6), accentSoft, "rgba(216,219,228,0.16)");
+    buildAreaChart("hearingChart", data.hearingsTrend || zeroSeries(6), lineSoft, "rgba(174,179,191,0.12)");
+    buildDoughnutChart("caseTypeChart", data.caseTypeSplit || [0, 0, 0, 0]);
+  }
+
+  function initAdminCharts(data = {}) {
+    buildBarChart("adminCasesChart", data.caseIntakeTrend || zeroSeries(6));
+    buildAreaChart("adminUsersChart", data.activeLawyersTrend || zeroSeries(6), accentSoft, "rgba(216,219,228,0.14)");
   }
 
   window.lexiCourtCharts = {
     initDashboardCharts,
     initAdminCharts
   };
-
-  document.addEventListener("DOMContentLoaded", () => {
-    if (document.body.dataset.page === "dashboard") {
-      initDashboardCharts();
-    }
-
-    if (document.body.dataset.page === "admin") {
-      initAdminCharts();
-    }
-  });
 })();
