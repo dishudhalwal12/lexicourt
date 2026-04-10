@@ -31,8 +31,49 @@ function normalizeRole(role, allowAdmin = false) {
   return normalized;
 }
 
+function buildUserProfileSnapshot({
+  uid,
+  fullName = "",
+  email = "",
+  role = "lawyer",
+  phone = "",
+  isActive = true,
+  practiceName = ""
+}) {
+  return {
+    uid: uid || "",
+    fullName: fullName || "",
+    email: email || "",
+    role: String(role || "lawyer").toLowerCase(),
+    phone: phone || "",
+    isActive: isActive !== false,
+    practiceName: practiceName || ""
+  };
+}
+
+function buildAuthFallbackProfile(user, overrides = {}) {
+  return buildUserProfileSnapshot({
+    uid: overrides.uid || user?.uid || "",
+    fullName: overrides.fullName || user?.displayName || "LexiCourt User",
+    email: overrides.email || user?.email || "",
+    role: overrides.role || "lawyer",
+    phone: overrides.phone || user?.phoneNumber || "",
+    isActive: overrides.isActive !== false,
+    practiceName: overrides.practiceName || ""
+  });
+}
+
 export function isPermissionDeniedError(error) {
   return error?.code === "permission-denied" || /insufficient permissions/i.test(String(error?.message || ""));
+}
+
+function isRecoverableProfileSyncError(error) {
+  return (
+    isPermissionDeniedError(error) ||
+    error?.code === "failed-precondition" ||
+    error?.code === "unavailable" ||
+    /offline|network|timed out/i.test(String(error?.message || ""))
+  );
 }
 
 function writeCachedUserProfileSnapshot(profile) {
@@ -103,28 +144,28 @@ export async function registerUser(email, password, fullName, role, options = {}
   try {
     const userCredential = await createUserWithEmailAndPassword(auth, email, password);
     const user = userCredential.user;
-
-    await setDoc(doc(db, "users", user.uid), {
-      uid: user.uid,
-      fullName: fullName,
-      email: email,
-      role: normalizedRole,
-      phone: "",
-      isActive: true,
-      practiceName: "",
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
-    });
-
-    writeCachedUserProfileSnapshot({
+    const profileSnapshot = buildUserProfileSnapshot({
       uid: user.uid,
       fullName,
       email,
-      role: normalizedRole,
-      phone: "",
-      isActive: true,
-      practiceName: ""
+      role: normalizedRole
     });
+
+    try {
+      await setDoc(doc(db, "users", user.uid), {
+        ...profileSnapshot,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+    } catch (error) {
+      if (!isRecoverableProfileSyncError(error)) {
+        throw error;
+      }
+
+      console.warn("Falling back to local profile cache after registration:", error);
+    }
+
+    writeCachedUserProfileSnapshot(profileSnapshot);
 
     return user;
   } catch (error) {
@@ -148,38 +189,37 @@ export async function loginWithGoogle() {
     const result = await signInWithPopup(auth, googleProvider);
     const user = result.user;
     const userDocRef = doc(db, "users", user.uid);
+    const fallbackProfile = buildAuthFallbackProfile(user, {
+      fullName: user.displayName || "Google User",
+      role: "lawyer",
+      phone: user.phoneNumber || ""
+    });
     let docSnap = null;
 
     try {
       docSnap = await getDoc(userDocRef);
     } catch (error) {
-      if (error?.code !== "permission-denied") {
+      if (!isRecoverableProfileSyncError(error)) {
         throw error;
       }
     }
 
     if (!docSnap || !docSnap.exists()) {
-      await setDoc(userDocRef, {
-        uid: user.uid,
-        fullName: user.displayName || "Google User",
-        email: user.email || "",
-        role: "lawyer",
-        phone: user.phoneNumber || "",
-        isActive: true,
-        practiceName: "",
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
+      try {
+        await setDoc(userDocRef, {
+          ...fallbackProfile,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+      } catch (error) {
+        if (!isRecoverableProfileSyncError(error)) {
+          throw error;
+        }
 
-      writeCachedUserProfileSnapshot({
-        uid: user.uid,
-        fullName: user.displayName || "Google User",
-        email: user.email || "",
-        role: "lawyer",
-        phone: user.phoneNumber || "",
-        isActive: true,
-        practiceName: ""
-      });
+        console.warn("Falling back to local profile cache after Google sign in:", error);
+      }
+
+      writeCachedUserProfileSnapshot(fallbackProfile);
     } else {
       writeCachedUserProfileSnapshot({
         uid: user.uid,
@@ -227,6 +267,14 @@ export async function getCurrentUserProfile(uid, options = {}) {
         });
         return profile;
       }
+
+      if (cachedProfile) {
+        return cachedProfile;
+      }
+
+      if (auth.currentUser && auth.currentUser.uid === uid) {
+        return buildAuthFallbackProfile(auth.currentUser, { uid });
+      }
     } catch (error) {
       lastError = error;
 
@@ -236,15 +284,7 @@ export async function getCurrentUserProfile(uid, options = {}) {
         }
 
         if (auth.currentUser && auth.currentUser.uid === uid) {
-          return {
-            uid,
-            fullName: auth.currentUser.displayName || "LexiCourt User",
-            email: auth.currentUser.email || "",
-            role: "lawyer",
-            phone: auth.currentUser.phoneNumber || "",
-            isActive: true,
-            practiceName: ""
-          };
+          return buildAuthFallbackProfile(auth.currentUser, { uid });
         }
       }
     }
@@ -256,6 +296,10 @@ export async function getCurrentUserProfile(uid, options = {}) {
 
   if (lastError && !isPermissionDeniedError(lastError)) {
     console.error("Error fetching user profile:", lastError);
+  }
+
+  if (auth.currentUser && auth.currentUser.uid === uid) {
+    return buildAuthFallbackProfile(auth.currentUser, { uid });
   }
 
   return cachedProfile;
