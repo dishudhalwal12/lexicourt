@@ -298,7 +298,6 @@
           ]);
           adminUsersCache = users;
           adminCasesCache = cases;
-
           const activeLawyers = users.filter((item) => item.role === "lawyer" && item.isActive).length;
           const flaggedFolders = cases.filter((item) => item.status === "Pending" || !item.nextHearingDate).length;
           const recentCases = cases.filter((item) => item.createdAt && typeof item.createdAt.toDate === "function").length;

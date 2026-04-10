@@ -174,7 +174,7 @@
               await loadCases();
             } catch (error) {
               console.error(error);
-              alert(error.message || "Unable to save the case right now.");
+              window.lexiCourtUtils?.notify?.(error.message || "Unable to save the case right now.", "error");
             } finally {
               submitButton.disabled = false;
               submitButton.textContent = caseId ? "Update Case" : "Save Case";

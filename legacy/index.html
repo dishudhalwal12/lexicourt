@@ -23,6 +23,7 @@
     <script type="module" src="js/firebase-config.js"></script>
     <script type="module">
       import { listenToAuthState, getCurrentUserProfile, logoutUser } from "./js/auth-service.js";
+      import { initLandingMotion } from "./js/landing-motion.js";
       import { initTopbarChrome } from "./js/page-init.js";
       window.handleLogout = async function() {
            try {
@@ -31,8 +32,9 @@
            } catch(e) { console.error(e); }
       };
       
-      document.addEventListener("DOMContentLoaded", () => {
+      const bootLandingPage = () => {
         initTopbarChrome();
+        initLandingMotion();
         listenToAuthState(async (user) => {
           const navLinks = document.querySelector(".nav-actions");
           if (user && navLinks) {
@@ -49,7 +51,13 @@
             `;
           }
         });
-      });
+      };
+
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", bootLandingPage, { once: true });
+      } else {
+        bootLandingPage();
+      }
     </script>
   </head>
   <body class="public-page landing-page">
@@ -77,11 +85,10 @@
         <article class="hero-copy">
           <div class="hero-copy-top">
             <span class="hero-kicker"><i class="bi bi-stars"></i> Black coat energy. Digital precision.</span>
-            <h1>Made for the black coat, the white band, and courtroom pressure.</h1>
+            <h1>Built for the black coat and the courtroom clock.</h1>
             <p>
-              LexiCourt turns case files, court orders, timelines, and first-draft filings into one
-              sharp legal workspace. It is designed for Indian lawyers who need speed, memory, and
-              courtroom composure without losing the gravity of the profession.
+              LexiCourt keeps case files, orders, timelines, and first drafts in one disciplined
+              workspace for faster, calmer hearing prep.
             </p>
             <div class="hero-actions">
               <a class="btn-dark" href="login.html">Login</a>
@@ -112,10 +119,10 @@
 
             <div class="hero-video-card">
               <video autoplay muted loop playsinline poster="">
-                <source src="https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4" type="video/mp4" />
+                <source src="/hero_section.mp4" type="video/mp4" />
               </video>
               <div class="hero-video-overlay">
-                <span class="floating-badge"><i class="bi bi-camera-video"></i> Court-prep preview</span>
+                <span class="floating-badge"><i class="bi bi-camera-video"></i> Court-prep in motion</span>
                 <div class="hero-stats">
                   <div class="hero-stat-pill">
                     <strong>24</strong>
@@ -158,8 +165,7 @@
             </div>
             <h3>Affidavits. Notices. Applications.</h3>
             <p>
-              Structured draft workflows turn case context into polished first-pass filings that
-              already feel like counsel touched them before the final review.
+              Draft workflows turn case context into polished first-pass filings ready for counsel review.
             </p>
             <div class="hero-mini-doc-card">
               <span>Draft Moodboard</span>
@@ -375,31 +381,5 @@
       <footer class="footer-minimal">LexiCourt • AI-Powered Legal Assistant &amp; Virtual Court Case Management System</footer>
     </main>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-      document.addEventListener("DOMContentLoaded", () => {
-        const revealTargets = document.querySelectorAll(
-          ".hero-panel, .section-block, .feature-story-card, .classic-step, .footer-minimal"
-        );
-
-        revealTargets.forEach((element, index) => {
-          element.classList.add("reveal-up");
-          element.style.transitionDelay = `${Math.min(index * 90, 280)}ms`;
-        });
-
-        const revealObserver = new IntersectionObserver(
-          (entries) => {
-            entries.forEach((entry) => {
-              if (entry.isIntersecting) {
-                entry.target.classList.add("is-visible");
-                revealObserver.unobserve(entry.target);
-              }
-            });
-          },
-          { threshold: 0.18 }
-        );
-
-        revealTargets.forEach((element) => revealObserver.observe(element));
-      });
-    </script>
   </body>
 </html>

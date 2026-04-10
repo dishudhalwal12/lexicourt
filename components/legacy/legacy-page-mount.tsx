@@ -85,11 +85,20 @@ async function injectScripts(doc: Document, registry: InjectedScript[]) {
 
 export function LegacyPageMount({ htmlFile }: LegacyPageMountProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const [hasMounted, setHasMounted] = useState(false);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string>("");
   const sourceUrl = useMemo(() => `/legacy/${htmlFile}`, [htmlFile]);
 
   useEffect(() => {
+    setHasMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hasMounted) {
+      return;
+    }
+
     let isActive = true;
     const injectedScripts: InjectedScript[] = [];
     const previousBodyClass = document.body.className;
@@ -151,33 +160,30 @@ export function LegacyPageMount({ htmlFile }: LegacyPageMountProps) {
         containerRef.current.innerHTML = "";
       }
     };
-  }, [htmlFile, sourceUrl]);
+  }, [hasMounted, htmlFile, sourceUrl]);
 
   if (state === "error") {
     return (
-      <main style={{ padding: "48px", color: "white", fontFamily: "Inter, sans-serif" }}>
-        <h1 style={{ marginBottom: 12 }}>Unable to load page</h1>
-        <p>{error}</p>
+      <main className="legacy-runtime-shell">
+        <section className="legacy-runtime-card">
+          <span className="legacy-runtime-kicker">Runtime State</span>
+          <h1>Unable to load page</h1>
+          <p>{error}</p>
+          <button className="legacy-runtime-button" type="button" onClick={() => window.location.reload()}>
+            Retry loading
+          </button>
+        </section>
       </main>
     );
   }
 
+  if (!hasMounted) {
+    return null;
+  }
+
   return (
     <>
-      {state === "loading" ? (
-        <div
-          style={{
-            minHeight: "100vh",
-            display: "grid",
-            placeItems: "center",
-            color: "white",
-            fontFamily: "Inter, sans-serif"
-          }}
-        >
-          Loading LexiCourt...
-        </div>
-      ) : null}
-      <div ref={containerRef} style={{ display: state === "loading" ? "none" : "block" }} />
+      <div ref={containerRef} />
     </>
   );
 }

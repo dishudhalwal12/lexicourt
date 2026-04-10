@@ -35,11 +35,11 @@
         const email = document.getElementById("registerEmail").value;
         const pwd = document.getElementById("registerPassword").value;
         const cpwd = document.getElementById("confirmPassword").value;
-        const role = document.getElementById("role").value.toLowerCase();
+        const role = "lawyer";
         const btn = document.getElementById("registerBtn");
 
         if (pwd !== cpwd) {
-          alert("Passwords do not match!");
+          window.lexiCourtUtils?.notify?.("Passwords do not match.", "error");
           return;
         }
 
@@ -48,9 +48,9 @@
 
         try {
           await registerUser(email, pwd, fullName, role);
-          redirectByRole(role);
+          redirectByRole(role, { replace: true });
         } catch (err) {
-          alert("Registration failed: " + err.message);
+          window.lexiCourtUtils?.notify?.(`Registration failed: ${err.message}`, "error");
           btn.textContent = "Create Workspace";
           btn.disabled = false;
         }
@@ -60,10 +60,10 @@
         try {
           const user = await loginWithGoogle();
           const profile = await getCurrentUserProfile(user.uid);
-          if (profile) redirectByRole(profile.role);
-          else window.location.href = "dashboard.html";
+          if (profile) redirectByRole(profile.role, { replace: true });
+          else redirectByRole("lawyer", { replace: true });
         } catch(err) {
-          alert("Google Sign-Up failed: " + err.message);
+          window.lexiCourtUtils?.notify?.(`Google Sign-Up failed: ${err.message}`, "error");
         }
       };
     </script>
@@ -92,8 +92,8 @@
             <span class="auth-kicker">Build Your Chamber</span>
             <h1>Set up a workspace that feels sharper than the paper file.</h1>
             <p>
-              Create a LexiCourt account for lawyer or client access and bring your matters,
-              documents, and courtroom prep into one dark, focused workspace.
+              Create a LexiCourt account for your lawyer workspace and bring your matters,
+              documents, and courtroom prep into one dark, focused system.
             </p>
           </div>
           <div class="court-emblem" aria-hidden="true">
@@ -111,7 +111,7 @@
 
         <div class="auth-card auth-card-register">
           <h1>Create account</h1>
-          <p>Set up your LexiCourt profile for lawyer or client access.</p>
+          <p>Set up your LexiCourt profile for lawyer access.</p>
           <form class="form-grid auth-form-grid auth-form-grid-register" onsubmit="handleRegister(event)">
             <div>
               <label class="section-label" for="fullName">Full Name</label>
@@ -131,10 +131,7 @@
             </div>
             <div>
               <label class="section-label" for="role">Role</label>
-              <select class="app-select" id="role" required>
-                <option value="lawyer">Lawyer</option>
-                <option value="client">Client</option>
-              </select>
+              <input class="app-input" id="role" type="text" value="Lawyer" readonly aria-readonly="true" />
             </div>
             <button id="registerBtn" class="btn-accent w-100 auth-span-full" type="submit">Create Workspace</button>
           </form>

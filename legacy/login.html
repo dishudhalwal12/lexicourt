@@ -39,10 +39,10 @@
         try {
           const user = await loginUser(email, pwd);
           const profile = await getCurrentUserProfile(user.uid);
-          if (profile) redirectByRole(profile.role);
-          else window.location.href = "dashboard.html";
+          if (profile) redirectByRole(profile.role, { replace: true });
+          else redirectByRole("lawyer", { replace: true });
         } catch (err) {
-          alert("Login failed: " + err.message);
+          window.lexiCourtUtils?.notify?.(`Login failed: ${err.message}`, "error");
           btn.textContent = "Enter Workspace";
           btn.disabled = false;
         }
@@ -52,10 +52,10 @@
         try {
           const user = await loginWithGoogle();
           const profile = await getCurrentUserProfile(user.uid);
-          if (profile) redirectByRole(profile.role);
-          else window.location.href = "dashboard.html";
+          if (profile) redirectByRole(profile.role, { replace: true });
+          else redirectByRole("lawyer", { replace: true });
         } catch(err) {
-          alert("Google Sign-In failed: " + err.message);
+          window.lexiCourtUtils?.notify?.(`Google Sign-In failed: ${err.message}`, "error");
         }
       };
     </script>

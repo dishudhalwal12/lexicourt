@@ -1,4 +1,5 @@
 import { db, auth, storage } from "./firebase-config.js";
+import { getCachedUserProfileSnapshot, isPermissionDeniedError } from "./auth-service.js";
 import {
   collection,
   doc,
@@ -52,8 +53,16 @@ function sortByTimestampAsc(items, key) {
 
 async function getUserRole() {
   const user = requireAuth();
-  const profile = await getDoc(doc(db, "users", user.uid));
-  return profile.exists() ? profile.data().role : null;
+  try {
+    const profile = await getDoc(doc(db, "users", user.uid));
+    return profile.exists() ? profile.data().role : null;
+  } catch (error) {
+    if (isPermissionDeniedError(error)) {
+      return getCachedUserProfileSnapshot(user.uid)?.role || "lawyer";
+    }
+
+    throw error;
+  }
 }
 
 async function canUseAdminDataPath() {
@@ -76,11 +85,21 @@ export function getCaseIdFromUrl() {
 }
 
 export function buildCaseUrl(path, caseId) {
-  if (!caseId) {
-    return path;
+  const target = new URL(path, window.location.href);
+  if (caseId) {
+    target.searchParams.set("caseId", caseId);
   }
 
-  return `${path}?caseId=${encodeURIComponent(caseId)}`;
+  return `${target.pathname}${target.search}${target.hash}`;
+}
+
+async function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("Unable to read the selected file."));
+    reader.readAsDataURL(file);
+  });
 }
 
 export async function createCase(caseData) {
@@ -110,29 +129,67 @@ export async function deleteCase(caseId) {
 
 export async function getCasesForCurrentUser() {
   const user = requireAuth();
-  const isAdmin = await canUseAdminDataPath();
+  let role = "lawyer";
 
-  if (isAdmin) {
-    return getAllCasesAdmin();
+  try {
+    role = (await getUserRole()) || "lawyer";
+  } catch (error) {
+    if (!isPermissionDeniedError(error)) {
+      throw error;
+    }
   }
 
-  const cases = [];
-  const seenIds = new Set();
+  const isAdmin = role === "admin";
 
-  const appendSnapshot = (snapshot) => {
-    snapshot.forEach((item) => {
-      if (!seenIds.has(item.id)) {
-        seenIds.add(item.id);
-        cases.push({ ...item.data(), id: item.id });
+  try {
+    if (isAdmin) {
+      return getAllCasesAdmin();
+    }
+
+    if (role === "client") {
+      const shares = await getClientSharedItems(user.uid);
+      const seenIds = new Set();
+      const sharedCases = [];
+
+      for (const share of shares) {
+        if (!share.caseId || seenIds.has(share.caseId)) {
+          continue;
+        }
+
+        seenIds.add(share.caseId);
+        const caseItem = await getCaseById(share.caseId);
+        if (caseItem) {
+          sharedCases.push(caseItem);
+        }
       }
-    });
-  };
 
-  appendSnapshot(await getDocs(query(collection(db, "caseFolders"), where("ownerUid", "==", user.uid))));
-  appendSnapshot(await getDocs(query(collection(db, "caseFolders"), where("assignedUserIds", "array-contains", user.uid))));
-  appendSnapshot(await getDocs(query(collection(db, "caseFolders"), where("clientId", "==", user.uid))));
+      return sortByTimestampDesc(sharedCases, "updatedAt");
+    }
 
-  return sortByTimestampDesc(cases, "updatedAt");
+    const cases = [];
+    const seenIds = new Set();
+
+    const appendSnapshot = (snapshot) => {
+      snapshot.forEach((item) => {
+        if (!seenIds.has(item.id)) {
+          seenIds.add(item.id);
+          cases.push({ ...item.data(), id: item.id });
+        }
+      });
+    };
+
+    appendSnapshot(await getDocs(query(collection(db, "caseFolders"), where("ownerUid", "==", user.uid))));
+    appendSnapshot(await getDocs(query(collection(db, "caseFolders"), where("assignedUserIds", "array-contains", user.uid))));
+    appendSnapshot(await getDocs(query(collection(db, "caseFolders"), where("clientId", "==", user.uid))));
+
+    return sortByTimestampDesc(cases, "updatedAt");
+  } catch (error) {
+    if (isPermissionDeniedError(error)) {
+      return [];
+    }
+
+    throw error;
+  }
 }
 
 export async function getAllCasesAdmin() {
@@ -174,13 +231,14 @@ function sanitizeFileName(fileName) {
 }
 
 export async function uploadCaseFileToStorage(caseId, file) {
-  const user = requireAuth();
   if (!caseId) {
     throw new Error("Case ID is required for file upload.");
   }
   if (!(file instanceof File)) {
     throw new Error("A valid file is required.");
   }
+
+  const user = requireAuth();
 
   const safeName = sanitizeFileName(file.name);
   const storagePath = `cases/${caseId}/${Date.now()}-${safeName}`;

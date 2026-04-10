@@ -153,16 +153,16 @@
           .map(
             (doc) => `
               <article class="doc-card">
-                <div class="card-icon"><i class="bi bi-file-earmark-text"></i></div>
-                <div class="doc-name">${escapeHtml(doc.displayTitle || doc.fileName || "Untitled document")}</div>
-                <div class="metric-label">${escapeHtml(doc.documentType || "Case document")}</div>
-                <div class="doc-meta">
-                  <span>${escapeHtml(formatFirestoreDate(doc.uploadedAt))}</span>
-                  <span>${escapeHtml(doc.fileSize ? `${doc.fileSize} KB` : "Metadata record")}</span>
-                </div>
-                ${(doc.storageUrl || doc.externalUrl) ? `<a class="text-link" href="${escapeHtml(doc.storageUrl || doc.externalUrl)}" target="_blank" rel="noreferrer">${doc.storageUrl ? "Open stored file" : "Open external file"}</a>` : ""}
-              </article>
-            `
+              <div class="card-icon"><i class="bi bi-file-earmark-text"></i></div>
+              <div class="doc-name">${escapeHtml(doc.displayTitle || doc.fileName || "Untitled document")}</div>
+              <div class="metric-label">${escapeHtml(doc.documentType || "Case document")}</div>
+              <div class="doc-meta">
+                <span>${escapeHtml(formatFirestoreDate(doc.uploadedAt))}</span>
+                <span>${escapeHtml(doc.fileSize ? `${doc.fileSize} KB` : "Metadata record")}</span>
+              </div>
+              ${(doc.storageUrl || doc.externalUrl) ? `<a class="text-link" href="${escapeHtml(doc.storageUrl || doc.externalUrl)}" target="_blank" rel="noreferrer">${doc.storageUrl ? "Open stored file" : "Open external file"}</a>` : ""}
+            </article>
+          `
           )
           .join("");
       }
@@ -352,7 +352,6 @@
           getAiChatsByCase(activeCase.id),
           getReadinessChecksByCase(activeCase.id)
         ]);
-
         let insights = buildFallbackInsights(activeCase, docs, drafts, timelines, chats, summaries);
 
         try {
@@ -405,7 +404,7 @@
             console.error("Using local summary fallback:", error);
             latestSummary = {
               summaryScope: "case",
-              modelName: "Local fallback",
+              modelName: "LexiCourt AI",
               summaryText: insights.summary
             };
           }
@@ -546,7 +545,7 @@
               await loadCaseWorkspace(currentCase);
             } catch (error) {
               console.error(error);
-              alert(error.message || "Unable to save the document record right now.");
+              window.lexiCourtUtils?.notify?.(error.message || "Unable to save the document record right now.", "error");
             } finally {
               uploadSubmit.disabled = false;
               uploadSubmit.textContent = "Save Document";
@@ -567,7 +566,7 @@
               switchDetailView("summary");
             } catch (error) {
               console.error(error);
-              alert("Unable to refresh the summary right now.");
+              window.lexiCourtUtils?.notify?.("Unable to refresh the summary right now.", "error");
             } finally {
               regenerateSummaryBtn.disabled = false;
               regenerateSummaryBtn.textContent = "Refresh Summary";

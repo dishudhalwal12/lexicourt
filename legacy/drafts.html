@@ -104,6 +104,8 @@
 
           setCaseLinks(selectedCase.id);
           const documents = await getDocumentsByCase(selectedCase.id);
+          document.getElementById("partyNames").value = `${selectedCase.clientName || "Client"} v. ${selectedCase.oppositeParty || "Opposite Party"}`;
+          document.getElementById("facts").value = selectedCase.notes || document.getElementById("facts").value;
 
           async function syncOutput() {
             const savedDrafts = await getDraftsByCase(selectedCase.id);
@@ -173,13 +175,13 @@
                 },
                 generatedText,
                 status: "generated",
-                modelName: response.mode === "gemini" ? "gemini-2.5-flash" : "LexiCourt Preview"
+                modelName: response.mode === "gemini" ? "gemini-2.5-flash" : "LexiCourt AI"
               });
 
               renderDraftOutput(type, generatedText);
             } catch (error) {
               console.error(error);
-              alert("Unable to generate the draft right now. Please check the API server and try again.");
+              window.lexiCourtUtils?.notify?.("Draft generation is unavailable right now. You can retry once the live API is ready.", "error");
             } finally {
               submitButton.disabled = false;
               submitButton.textContent = "Generate Draft";

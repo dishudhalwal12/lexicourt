@@ -8,8 +8,9 @@ import {
 } from "./firestore-service.js";
 
 let topbarChromeBound = false;
-let notificationsBound = false;
-let storyMotionBound = false;
+let topbarCleanup = null;
+let storyMotionCleanup = null;
+let authSyncCleanup = null;
 
 function escapeHtml(value) {
     return String(value ?? "")
@@ -112,14 +113,18 @@ async function buildNotifications(profile) {
     const cases = await getCasesForCurrentUser();
     const now = Date.now();
     const items = [];
+    const isClientProfile = profile?.role === "client";
 
     const limitedCases = cases.slice(0, 8);
     const relatedData = await Promise.all(
         limitedCases.map(async (caseItem) => {
+            const documentsPromise = getDocumentsByCase(caseItem.id);
+            const draftsPromise = isClientProfile ? Promise.resolve([]) : getDraftsByCase(caseItem.id);
+            const readinessChecksPromise = isClientProfile ? Promise.resolve([]) : getReadinessChecksByCase(caseItem.id);
             const [documents, drafts, readinessChecks] = await Promise.all([
-                getDocumentsByCase(caseItem.id),
-                getDraftsByCase(caseItem.id),
-                getReadinessChecksByCase(caseItem.id)
+                documentsPromise,
+                draftsPromise,
+                readinessChecksPromise
             ]);
 
             return {
@@ -161,12 +166,14 @@ async function buildNotifications(profile) {
                 level: "medium",
                 levelLabel: "Missing",
                 title: `${caseItem.caseTitle || "Matter"} has no document record yet`,
-                body: "Add at least one case document so summaries, timelines, and recall signals become more reliable.",
+                body: isClientProfile
+                    ? "No document record has been shared for this matter yet."
+                    : "Add at least one case document so summaries, timelines, and recall signals become more reliable.",
                 href
             });
         }
 
-        if (!drafts.length && caseItem.status === "Active") {
+        if (!isClientProfile && !drafts.length && caseItem.status === "Active") {
             items.push({
                 level: "info",
                 levelLabel: "Draft",
@@ -177,7 +184,7 @@ async function buildNotifications(profile) {
         }
 
         const latestCheck = readinessChecks[0];
-        if (latestCheck?.missingItems?.length) {
+        if (!isClientProfile && latestCheck?.missingItems?.length) {
             items.push({
                 level: "high",
                 levelLabel: "Action",
@@ -208,19 +215,19 @@ async function buildNotifications(profile) {
 }
 
 function initNotificationCenter(profile) {
-    if (notificationsBound) {
-        return;
-    }
-
     const buttons = Array.from(document.querySelectorAll("[data-notification-trigger]"));
     if (!buttons.length) {
         return;
     }
 
-    notificationsBound = true;
     const modalEl = ensureNotificationsModal();
 
     buttons.forEach((button) => {
+        if (button.dataset.notificationsBound === "true") {
+            return;
+        }
+
+        button.dataset.notificationsBound = "true";
         button.addEventListener("click", async (event) => {
             event.preventDefault();
 
@@ -264,11 +271,7 @@ export function initTopbarChrome() {
         return;
     }
 
-    if (topbarChromeBound) {
-        return;
-    }
-
-    topbarChromeBound = true;
+    topbarCleanup?.();
     const isWorkspacePage = document.body.classList.contains("workspace-page");
     let ticking = false;
 
@@ -294,12 +297,20 @@ export function initTopbarChrome() {
     syncTopbarState();
     window.addEventListener("scroll", requestSync, { passive: true });
     window.addEventListener("resize", requestSync);
+
+    topbarCleanup = () => {
+        window.removeEventListener("scroll", requestSync);
+        window.removeEventListener("resize", requestSync);
+        topbar.classList.remove("is-condensed", "is-hidden");
+        document.body.classList.remove("nav-is-condensed", "nav-is-hidden");
+        topbarCleanup = null;
+        topbarChromeBound = false;
+    };
+    topbarChromeBound = true;
 }
 
 function initStoryMotion() {
-    if (storyMotionBound) {
-        return;
-    }
+    storyMotionCleanup?.();
 
     const selectors = [
         ".page-header",
@@ -311,7 +322,6 @@ function initStoryMotion() {
         ".timeline-card",
         ".timeline-event",
         ".hero-copy",
-        ".hero-side-card",
         ".feature-card",
         ".classic-step",
         ".auth-showcase",
@@ -327,8 +337,6 @@ function initStoryMotion() {
     if (!elements.length) {
         return;
     }
-
-    storyMotionBound = true;
 
     elements.forEach((element, index) => {
         element.classList.add("story-reveal");
@@ -353,6 +361,11 @@ function initStoryMotion() {
     );
 
     elements.forEach((element) => observer.observe(element));
+
+    storyMotionCleanup = () => {
+        observer.disconnect();
+        storyMotionCleanup = null;
+    };
 }
 
 // Call this function once the DOM is loaded to wire up standard UI elements
@@ -374,7 +387,8 @@ export function initSharedUI() {
     }
 
     // Sync User Name in Navbar
-    listenToAuthState(async (user) => {
+    authSyncCleanup?.();
+    authSyncCleanup = listenToAuthState(async (user) => {
         if (user) {
             const profile = await getCurrentUserProfile(user.uid);
             const userNameEl = document.getElementById("navUserName");

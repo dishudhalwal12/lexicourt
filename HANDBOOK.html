@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LexiCourt Handbook</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@400;600&family=Syne:wght@700;800&display=swap');
+
+    :root {
+      --bg: #0f0f0f;
+      --card: #1a1a1a;
+      --card-soft: #141414;
+      --text: #f0f0f0;
+      --body: #cccccc;
+      --muted: #888888;
+      --border: #2a2a2a;
+      --red: #ff0001;
+      --lime: #d9ff4a;
+      --white-fade: rgba(255, 255, 255, 0.03);
+      --shadow: 0 22px 60px rgba(0, 0, 0, 0.28);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at top, rgba(255, 0, 1, 0.08), transparent 28%),
+        radial-gradient(circle at 85% 12%, rgba(217, 255, 74, 0.08), transparent 22%),
+        var(--bg);
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 15px;
+      line-height: 1.8;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    .page {
+      width: min(900px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 36px 0 64px;
+    }
+
+    .cover,
+    .section-card {
+      position: relative;
+      overflow: hidden;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 32px;
+      box-shadow: var(--shadow);
+      animation: fadeInUp 0.3s ease both;
+    }
+
+    .cover {
+      padding: 40px 40px 36px;
+      background:
+        linear-gradient(135deg, rgba(255, 0, 1, 0.12), transparent 28%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent 100%),
+        var(--card);
+    }
+
+    .cover::after {
+      content: "";
+      position: absolute;
+      inset: auto -10% -60% auto;
+      width: 360px;
+      height: 360px;
+      background: radial-gradient(circle, rgba(255, 0, 1, 0.18), transparent 62%);
+      pointer-events: none;
+    }
+
+    .cover-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      margin-bottom: 18px;
+      border: 1px solid rgba(217, 255, 74, 0.28);
+      border-radius: 999px;
+      background: rgba(217, 255, 74, 0.06);
+      color: var(--lime);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .project-name {
+      margin: 0;
+      font-family: 'Syne', sans-serif;
+      font-size: clamp(76px, 10vw, 96px);
+      font-weight: 800;
+      line-height: 0.95;
+      letter-spacing: -0.05em;
+      color: #ffffff;
+    }
+
+    .name-underline {
+      width: 200px;
+      height: 6px;
+      margin: 18px 0 22px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--lime), rgba(217, 255, 74, 0.18));
+    }
+
+    .subtitle {
+      max-width: 760px;
+      margin: 0 0 8px;
+      color: var(--body);
+      font-size: 19px;
+    }
+
+    .one-liner {
+      max-width: 760px;
+      margin: 0 0 28px;
+      color: var(--text);
+      font-size: 17px;
+    }
+
+    .meta-line {
+      margin: 0 0 22px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .stat-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+
+    .stat-pill {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 4px;
+      min-width: 172px;
+      padding: 14px 18px;
+      border-radius: 22px;
+      border: 1px solid rgba(255, 0, 1, 0.18);
+      background: rgba(255, 0, 1, 0.08);
+      color: var(--text);
+    }
+
+    .stat-label {
+      color: var(--muted);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .stat-value {
+      color: var(--text);
+      font-family: 'Syne', sans-serif;
+      font-size: 40px;
+      font-weight: 800;
+      line-height: 1;
+    }
+
+    .stat-value strong {
+      color: var(--red);
+    }
+
+    .meta-table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+    }
+
+    .meta-table th,
+    .meta-table td {
+      padding: 16px 18px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .meta-table th {
+      background: #111111;
+      color: var(--lime);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .meta-table tr:nth-child(even) td {
+      background: rgba(255, 255, 255, 0.015);
+    }
+
+    .divider {
+      height: 2px;
+      margin: 28px 0 24px;
+      background: linear-gradient(90deg, var(--red), rgba(255, 0, 1, 0.2));
+      border-radius: 999px;
+    }
+
+    .content {
+      display: grid;
+      gap: 24px;
+    }
+
+    .section-card {
+      isolation: isolate;
+    }
+
+    .section-card::before {
+      content: attr(data-num);
+      position: absolute;
+      top: 12px;
+      right: 20px;
+      z-index: 0;
+      font-family: 'Syne', sans-serif;
+      font-size: 160px;
+      font-weight: 800;
+      line-height: 1;
+      color: var(--white-fade);
+      transition: transform 0.3s ease;
+      pointer-events: none;
+    }
+
+    .section-card:hover::before {
+      transform: translateY(-8px);
+    }
+
+    .section-card > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .section-label {
+      margin: 0 0 10px;
+      color: var(--red);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .section-title {
+      margin: 0 0 18px;
+      font-family: 'Syne', sans-serif;
+      font-size: 22px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    p {
+      margin: 0 0 14px;
+      color: var(--body);
+    }
+
+    strong {
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .bullet-list,
+    .owned-list,
+    .role-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 12px;
+    }
+
+    .bullet-list li,
+    .owned-list li,
+    .role-list li {
+      position: relative;
+      padding-left: 18px;
+      color: var(--body);
+      opacity: 0;
+      transform: translateX(-10px);
+      animation: slideBullet 0.4s ease forwards;
+    }
+
+    .bullet-list li::before,
+    .owned-list li::before,
+    .role-list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 11px;
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--red);
+      box-shadow: 0 0 0 4px rgba(255, 0, 1, 0.12);
+    }
+
+    .bullet-list li:nth-child(1),
+    .owned-list li:nth-child(1),
+    .role-list li:nth-child(1) { animation-delay: 0.05s; }
+    .bullet-list li:nth-child(2),
+    .owned-list li:nth-child(2),
+    .role-list li:nth-child(2) { animation-delay: 0.1s; }
+    .bullet-list li:nth-child(3),
+    .owned-list li:nth-child(3),
+    .role-list li:nth-child(3) { animation-delay: 0.15s; }
+    .bullet-list li:nth-child(4),
+    .owned-list li:nth-child(4),
+    .role-list li:nth-child(4) { animation-delay: 0.2s; }
+    .bullet-list li:nth-child(5),
+    .owned-list li:nth-child(5),
+    .role-list li:nth-child(5) { animation-delay: 0.25s; }
+    .bullet-list li:nth-child(6),
+    .owned-list li:nth-child(6),
+    .role-list li:nth-child(6) { animation-delay: 0.3s; }
+
+    .feature-list li strong,
+    .step-list strong {
+      color: var(--text);
+    }
+
+    .role-grid,
+    .team-grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .role-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin-top: 20px;
+    }
+
+    .role-card,
+    .team-card {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+    }
+
+    .role-name {
+      margin: 0 0 10px;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--lime);
+    }
+
+    .role-screen {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .tech-grid {
+      display: grid;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+
+    .tech-row {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 16px;
+      align-items: start;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tech-row:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .tech-label {
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .pill-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .tech-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: var(--lime);
+      color: #050505;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      line-height: 1;
+    }
+
+    .step-list {
+      counter-reset: flow;
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 16px;
+    }
+
+    .step-list li {
+      display: grid;
+      grid-template-columns: 54px 1fr;
+      gap: 16px;
+      align-items: start;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .step-list li:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .step-list li::before {
+      counter-increment: flow;
+      content: counter(flow);
+      display: grid;
+      place-items: center;
+      width: 54px;
+      height: 54px;
+      border-radius: 16px;
+      background: rgba(255, 0, 1, 0.08);
+      border: 1px solid rgba(255, 0, 1, 0.18);
+      color: var(--red);
+      font-family: 'Syne', sans-serif;
+      font-size: 28px;
+      font-weight: 800;
+    }
+
+    .member-name {
+      margin: 0;
+      font-family: 'Syne', sans-serif;
+      font-size: 28px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    .member-role {
+      margin: 4px 0 14px;
+      color: var(--lime);
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .honest-line {
+      margin: 14px 0 0;
+      color: var(--muted);
+    }
+
+    .shared-note {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+    }
+
+    .honest-card {
+      background: var(--card-soft);
+      border-left: 3px solid var(--lime);
+    }
+
+    .quote-block {
+      position: relative;
+      padding: 8px 0 0 28px;
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.9;
+      color: var(--text);
+    }
+
+    .quote-block::before {
+      content: "“";
+      position: absolute;
+      left: -4px;
+      top: -18px;
+      color: var(--lime);
+      font-family: 'Syne', sans-serif;
+      font-size: 96px;
+      line-height: 1;
+    }
+
+    .micro {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .mono {
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--red);
+      font-size: 13px;
+    }
+
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(12px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes slideBullet {
+      from {
+        opacity: 0;
+        transform: translateX(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    @media (max-width: 860px) {
+      .page {
+        width: min(900px, calc(100% - 24px));
+        padding-top: 24px;
+      }
+
+      .cover,
+      .section-card {
+        padding: 24px;
+      }
+
+      .role-grid,
+      .team-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .tech-row,
+      .step-list li {
+        grid-template-columns: 1fr;
+      }
+
+      .step-list li::before {
+        margin-bottom: 6px;
+      }
+    }
+
+    @media print {
+      @page {
+        margin: 14mm;
+      }
+
+      body {
+        background: #ffffff !important;
+        color: #111111 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+
+      .page {
+        width: 100%;
+        margin: 0;
+        padding: 0;
+      }
+
+      .cover,
+      .section-card,
+      .role-card,
+      .team-card {
+        background: #ffffff !important;
+        color: #111111 !important;
+        box-shadow: none !important;
+        border-color: #d8d8d8 !important;
+        break-inside: avoid;
+      }
+
+      .cover-kicker,
+      .stat-pill {
+        background: #f7f7f7 !important;
+      }
+
+      .section-title,
+      .member-name,
+      .project-name,
+      strong,
+      .tech-label,
+      .quote-block {
+        color: #111111 !important;
+      }
+
+      .subtitle,
+      .one-liner,
+      p,
+      .bullet-list li,
+      .owned-list li,
+      .role-list li,
+      .role-screen,
+      .honest-line,
+      .shared-note,
+      .micro,
+      .meta-line {
+        color: #333333 !important;
+      }
+
+      .meta-table th {
+        background: #efefef !important;
+        color: #111111 !important;
+      }
+
+      .meta-table tr:nth-child(even) td {
+        background: #fafafa !important;
+      }
+
+      .section-card::before,
+      .cover::after {
+        color: rgba(0, 0, 0, 0.05) !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="cover">
+      <div class="cover-kicker">Project Handbook / Print Ready / January 2026</div>
+      <h1 class="project-name">LexiCourt</h1>
+      <div class="name-underline"></div>
+      <p class="subtitle"><strong>AI-Powered Legal Assistant &amp; Virtual Court Case Management System</strong></p>
+      <p class="one-liner"><strong>LexiCourt</strong> gives solo lawyers and small legal teams a faster way to organize case files, question their documents, and walk into court prepared.</p>
+      <p class="meta-line">Jagannath International Management School, Vasant Kunj, New Delhi | B.Tech 2022-2026</p>
+
+      <div class="stat-row">
+        <div class="stat-pill">
+          <div class="stat-label">Team Size</div>
+          <div class="stat-value"><strong>3</strong> Members</div>
+        </div>
+        <div class="stat-pill">
+          <div class="stat-label">Main Tech</div>
+          <div class="stat-value"><strong>Firebase</strong></div>
+        </div>
+        <div class="stat-pill">
+          <div class="stat-label">Domain</div>
+          <div class="stat-value"><strong>Legal</strong></div>
+        </div>
+      </div>
+
+      <table class="meta-table">
+        <thead>
+          <tr>
+            <th>Submitted To</th>
+            <th>Submitted By</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Assistant Professor</strong>, IT Department, JIMS, Vasant Kunj, New Delhi</td>
+            <td><strong>Jaskirat Singh Kamboh</strong><br />Aarush Gupta<br />Sarthak Tuteja</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <div class="divider"></div>
+
+    <section class="content">
+      <article class="section-card" data-num="01">
+        <p class="section-label">Section 1</p>
+        <h2 class="section-title">Why This Needed to Exist</h2>
+        <ul class="bullet-list">
+          <li><strong>Pre-hearing panic</strong> hits when I spend an hour flipping through a thick file just to remember what the last order said.</li>
+          <li><strong>Paper sprawl</strong> means one missing page, one loose notice, or one buried date can throw off my entire hearing prep.</li>
+          <li><strong>Draft fatigue</strong> wastes time because affidavits, notices, and applications keep getting rebuilt from scratch.</li>
+          <li><strong>Client visibility</strong> breaks down when updates live inside my notebook, my memory, and a pile of documents no one else can read quickly.</li>
+        </ul>
+      </article>
+
+      <article class="section-card" data-num="02">
+        <p class="section-label">Section 2</p>
+        <h2 class="section-title">The Product</h2>
+        <p><strong>LexiCourt</strong> is a browser-based legal workspace where a lawyer can create a matter, upload records, ask an AI assistant direct questions about those files, pull a short summary, extract hearing dates, generate a first draft, and check whether the folder still has gaps before court.</p>
+        <p>This feels different from a generic college build because the product was shaped around <strong>hearing-readiness pressure</strong>, not around a fake dashboard with legal labels on top.</p>
+        <ul class="bullet-list feature-list">
+          <li><strong>Matter Workspace</strong> - creates case folders and keeps each matter organized around one clear record.</li>
+          <li><strong>Document Vault</strong> - stores orders, affidavits, notices, and supporting files inside the right case context.</li>
+          <li><strong>AI Case Chat</strong> - answers plain-language questions from uploaded legal documents.</li>
+          <li><strong>Summary Snapshots</strong> - turns long judgments and orders into quick reading before a hearing.</li>
+          <li><strong>Timeline View</strong> - pulls dates, orders, and milestones into one readable sequence.</li>
+          <li><strong>Draft + Readiness Desk</strong> - creates first-pass legal drafts and flags what may still be missing.</li>
+        </ul>
+      </article>
+
+      <article class="section-card" data-num="03">
+        <p class="section-label">Section 3</p>
+        <h2 class="section-title">The Users</h2>
+        <p><strong>Role-based access</strong> keeps the product focused: the lawyer does the heavy work, the client gets clarity, and the admin keeps a small practice under control.</p>
+        <div class="role-grid">
+          <div class="role-card">
+            <h3 class="role-name"><strong>Lawyer</strong></h3>
+            <ul class="role-list">
+              <li>Creates and manages case folders for each active matter.</li>
+              <li>Uploads documents, asks AI questions, and pulls summaries or timelines.</li>
+              <li>Generates drafts and checks missing-document alerts before court.</li>
+            </ul>
+            <p class="role-screen">Main screen: the <strong>Lawyer Dashboard</strong> with case cards, recent matters, and quick actions.</p>
+          </div>
+          <div class="role-card">
+            <h3 class="role-name"><strong>Client</strong></h3>
+            <ul class="role-list">
+              <li>Checks shared updates without touching legal editing tools.</li>
+              <li>Views hearing dates, summaries, and the documents the lawyer chooses to share.</li>
+              <li>Gets a cleaner sense of progress without calling for every small update.</li>
+            </ul>
+            <p class="role-screen">Main screen: a <strong>Client Dashboard</strong> with case status, next dates, and shared files.</p>
+          </div>
+          <div class="role-card">
+            <h3 class="role-name"><strong>Admin</strong></h3>
+            <ul class="role-list">
+              <li>Manages user accounts and access permissions inside a small practice.</li>
+              <li>Tracks flagged matters, storage usage, and team activity.</li>
+              <li>Reviews missing-document alerts across the practice when needed.</li>
+            </ul>
+            <p class="role-screen">Main screen: an <strong>Admin Dashboard</strong> with user control, flagged folders, and top-level counts.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="section-card" data-num="04">
+        <p class="section-label">Section 4</p>
+        <h2 class="section-title">The Engine Room ⚙️</h2>
+        <div class="tech-grid">
+          <div class="tech-row">
+            <div class="tech-label">Frontend</div>
+            <div class="pill-wrap">
+              <span class="tech-pill">HTML5</span>
+              <span class="tech-pill">CSS3</span>
+              <span class="tech-pill">JavaScript</span>
+              <span class="tech-pill">Bootstrap 5</span>
+            </div>
+          </div>
+          <div class="tech-row">
+            <div class="tech-label">Backend</div>
+            <div class="pill-wrap">
+              <span class="tech-pill">Firebase Studio</span>
+              <span class="tech-pill">Firebase Authentication</span>
+              <span class="tech-pill">Firebase Cloud Functions</span>
+              <span class="tech-pill">Firebase Realtime Database</span>
+              <span class="tech-pill">Firebase Cloud Storage</span>
+            </div>
+          </div>
+          <div class="tech-row">
+            <div class="tech-label">AI</div>
+            <div class="pill-wrap">
+              <span class="tech-pill">Google Gemini API</span>
+              <span class="tech-pill">Prompt Templates</span>
+            </div>
+          </div>
+          <div class="tech-row">
+            <div class="tech-label">Deployment</div>
+            <div class="pill-wrap">
+              <span class="tech-pill">Git</span>
+              <span class="tech-pill">GitHub</span>
+              <span class="tech-pill">Firebase Hosting</span>
+            </div>
+          </div>
+        </div>
+        <p>These tools were picked for one blunt reason: <strong>execution speed</strong> mattered, and a three-person team needed auth, storage, hosting, and AI without losing weeks to server setup.</p>
+      </article>
+
+      <article class="section-card" data-num="05">
+        <p class="section-label">Section 5</p>
+        <h2 class="section-title">The Flow</h2>
+        <ol class="step-list">
+          <li><div><strong>Sign in</strong> and land on a dashboard that shows your matters, recent work, and the next place to click.</div></li>
+          <li><div><strong>Create</strong> a case folder, add matter details, and turn a loose pile of papers into one structured record.</div></li>
+          <li><div><strong>Upload</strong> orders, affidavits, notices, and supporting files, then watch the folder fill out like a working brief.</div></li>
+          <li><div><strong>Ask</strong> the AI what happened last, what the order says, or which dates matter, and get the answer inside the same screen.</div></li>
+          <li><div><strong>Generate</strong> a summary, a timeline, or a first draft so the lawyer sees usable text instead of raw document bulk.</div></li>
+          <li><div><strong>Check</strong> readiness before court and spot what still feels thin while there is still time to fix it.</div></li>
+        </ol>
+      </article>
+
+      <article class="section-card" data-num="06">
+        <p class="section-label">Section 6</p>
+        <h2 class="section-title">Who Built This</h2>
+        <div class="team-grid">
+          <div class="team-card">
+            <h3 class="member-name">Jaskirat Singh Kamboh</h3>
+            <p class="member-role">Frontend Development</p>
+            <p><strong>Owned:</strong></p>
+            <ul class="owned-list">
+              <li>Login, signup, dashboard, case folder, upload, chat, and draft screens.</li>
+              <li>Responsive layout work across desktop-sized and smaller screens.</li>
+              <li>Navigation flow so moving across the product felt like one joined-up experience.</li>
+            </ul>
+            <p class="honest-line">He figured out that <strong>interface consistency</strong> takes longer than making one page look good.</p>
+          </div>
+          <div class="team-card">
+            <h3 class="member-name">Aarush Gupta</h3>
+            <p class="member-role">Backend and AI Integration</p>
+            <p><strong>Owned:</strong></p>
+            <ul class="owned-list">
+              <li>Firebase setup for auth, storage, and access rules.</li>
+              <li>Gemini integration for document chat, summaries, timelines, and drafts.</li>
+              <li>Prompt tuning until the outputs sounded useful in a legal context.</li>
+            </ul>
+            <p class="honest-line">He learned that <strong>prompt quality</strong> comes from repeated testing, not one lucky API call.</p>
+          </div>
+          <div class="team-card">
+            <h3 class="member-name">Sarthak Tuteja</h3>
+            <p class="member-role">Database, Testing, and Deployment</p>
+            <p><strong>Owned:</strong></p>
+            <ul class="owned-list">
+              <li>Database structure for folders, files, user profiles, and generated outputs.</li>
+              <li>Manual testing across full user flows, bug tracking, and follow-up checks.</li>
+              <li>GitHub coordination, merge cleanup, and the final Firebase Hosting push.</li>
+            </ul>
+            <p class="honest-line">He found that <strong>release discipline</strong> matters just as much as writing the code in the first place.</p>
+          </div>
+        </div>
+        <p class="shared-note"><strong>Shared work</strong> stayed real across the whole project: the team planned the feature list together, wrote the synopsis together, and ran the final integration sessions side by side until the full app held together.</p>
+      </article>
+
+      <article class="section-card honest-card" data-num="07">
+        <p class="section-label">Section 7</p>
+        <h2 class="section-title">What's Not Done Yet</h2>
+        <ul class="bullet-list">
+          <li><strong>OCR is missing</strong>, so weak scans and handwritten pages still break text extraction.</li>
+          <li><strong>AI output needs review</strong>, because drafts and summaries are first-pass work, not filing-ready legal text.</li>
+          <li><strong>Court-system links are absent</strong>, so LexiCourt stops at internal preparation instead of direct e-Courts or ICMS submission.</li>
+        </ul>
+      </article>
+
+      <article class="section-card" data-num="08">
+        <p class="section-label">Section 8</p>
+        <h2 class="section-title">What's Next</h2>
+        <ul class="bullet-list">
+          <li><strong>Build</strong> OCR support so scanned orders and handwritten notes can enter the same document pipeline.</li>
+          <li><strong>Add</strong> Hindi and Punjabi support so the product fits the language reality of North Indian legal work.</li>
+          <li><strong>Connect</strong> shared-team workflows and later e-filing paths so a matter can move from preparation to action with less copying.</li>
+        </ul>
+      </article>
+
+      <article class="section-card" data-num="09">
+        <p class="section-label">Section 9</p>
+        <h2 class="section-title">Why This Mattered</h2>
+        <blockquote class="quote-block">
+          <strong>LexiCourt</strong> turned courtroom admin into one working workspace: folders, uploads, AI answers, summaries, timelines, drafts, and readiness checks under the same roof. Building it taught us that product work starts with a sharp problem, then survives on prompt tuning, database discipline, and stubborn testing. We also learned that software feels different when it is shaped around somebody's actual bad day. If this saves a lawyer even one hour before a hearing, it has already earned its place.
+        </blockquote>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

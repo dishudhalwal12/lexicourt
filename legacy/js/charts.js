@@ -100,6 +100,10 @@
       return;
     }
 
+    const gradient = ctx.createLinearGradient(0, 0, 0, 240);
+    gradient.addColorStop(0, "rgba(245,245,247,0.95)");
+    gradient.addColorStop(1, "rgba(216,219,228,0.25)");
+
     new Chart(ctx, {
       type: "bar",
       data: {
@@ -108,8 +112,9 @@
           {
             data,
             borderRadius: 10,
-            backgroundColor: data.map((value, index) => (index === 4 ? accent : mutedBar)),
-            hoverBackgroundColor: data.map((value, index) => (index === 4 ? accentSoft : "#d9d9d9"))
+            maxBarThickness: 28,
+            backgroundColor: data.map((value, index) => (index === 4 ? gradient : mutedBar)),
+            hoverBackgroundColor: data.map((value, index) => (index === 4 ? accentSoft : "#2a2c38"))
           }
         ]
       },
@@ -147,6 +152,7 @@
             fill: true,
             tension: 0.42,
             borderWidth: 2.2,
+            pointBorderWidth: 0,
             pointRadius: [0, 0, 0, 0, 4, 3],
             pointBackgroundColor: [accent, accent, accent, accent, accent, lineSoft],
             pointHoverRadius: 5
@@ -180,7 +186,8 @@
             data,
             backgroundColor: ["#f5f5f7", "#cfd3dc", "#848997", "#353844"],
             borderWidth: 0,
-            hoverOffset: 4
+            radius: "92%",
+            hoverOffset: 6
           }
         ]
       },
@@ -195,7 +202,7 @@
               color: "#9d9ead",
               usePointStyle: true,
               boxWidth: 8,
-              padding: 18
+              padding: 16
             }
           },
           tooltip: baseTooltip()

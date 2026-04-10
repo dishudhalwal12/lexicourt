@@ -1,81 +1,41 @@
 # LexiCourt
 
-LexiCourt is a courtroom-focused legal workflow app for Indian practice. It includes:
+LexiCourt is a legal workflow and courtroom-preparation app built for Indian practice. It includes case tracking, document management, AI-assisted summaries, draft generation, timelines, and hearing-readiness support.
 
-- matter and case management
-- document records and file upload
-- AI assistant flows
-- draft generation
-- timelines
-- readiness / hearing-prep insights
-- admin and client dashboards
+## 5-Minute Demo Setup
 
-The project now runs through a **Next.js + TypeScript** app layer while preserving the current product design and workflow.
+If you only need to show the app quickly on a laptop:
 
-## Tech Stack
+1. Install Git and Node.js if they are missing.
+2. Clone the repository.
+3. Run `npm install`.
+4. Create a `.env` file from `.env.example`.
+5. Add the working Gemini API key.
+6. Run `npm run dev:all`.
+7. Open `http://127.0.0.1:3000`.
+8. Click `Demo Workspace` if you want to show the app without depending on live Firebase data.
 
-- Next.js
-- TypeScript
-- React
-- Firebase Authentication
-- Firestore
-- Firebase Storage
-- Gemini API through the local Node server
-- Chart.js
-- Bootstrap 5
+## What You Need Before Running LexiCourt
 
-## Important Setup Note
-
-There are two kinds of config in this repo:
-
-1. **Firebase web config**
-This is already present in the project and is okay to keep in the client app.
-
-2. **Gemini server key**
-This must stay in a local `.env` file.
-
-Do **not** push the Gemini API key into a public GitHub repository.
-
-You do **not** need to generate a new Gemini key for the client laptop.
-You can use the **same working key** you already have by creating a local `.env` file on the client laptop after cloning.
-
-## Folder Structure
-
-```text
-LexiCourt/
-├── app/                  # Next.js app routes
-├── components/           # shared React helpers
-├── legacy/               # preserved HTML/CSS/JS app surface used by the Next bridge
-│   ├── assets/
-│   ├── css/
-│   └── js/
-├── server/               # Gemini / ML / local API logic
-├── ML/                   # curated legal datasets
-├── context/              # project docs / references
-├── next.config.ts
-├── package.json
-├── tsconfig.json
-├── firebase.json
-├── firestore.rules
-└── storage.rules
-```
-
-## What You Need On The Client Laptop
-
-Minimum requirements:
+You need these tools on the laptop:
 
 - Git
-- Node.js LTS
+- Node.js
 - npm
-- VS Code or any code editor
 
-Recommended Node version:
+Important:
+
+- Node.js is the JavaScript runtime used to run this project locally.
+- When you install Node.js, `npm` is installed with it automatically.
+- You do not need to install JavaScript separately.
+
+Recommended version:
 
 - Node.js 20 or newer
 
-## Before You Start
+## Step 1: Check If Git, Node.js, and npm Are Already Installed
 
-Open terminal and verify:
+Open Terminal on macOS/Linux or PowerShell on Windows and run:
 
 ```bash
 git --version
@@ -83,87 +43,97 @@ node -v
 npm -v
 ```
 
-If these commands work, continue.
+If all 3 commands show a version number, move to cloning the repository.
 
-If not, use the install instructions below.
+If one of them says `command not found` or `is not recognized`, install that tool using the steps below.
 
-## If Git Is Missing
-
-### Windows
-
-Install:
-
-- Git from [https://git-scm.com/download/win](https://git-scm.com/download/win)
-
-Or with Winget:
-
-```powershell
-winget install --id Git.Git -e
-```
+## Step 2: Install Git If It Is Missing
 
 ### macOS
 
-Install:
+Option 1:
 
 ```bash
 xcode-select --install
 ```
 
-Or with Homebrew:
+Option 2 with Homebrew:
 
 ```bash
 brew install git
 ```
 
-## If Node.js Is Missing
-
 ### Windows
 
-Install Node LTS from:
+Download Git from:
 
-- [https://nodejs.org](https://nodejs.org)
+- [https://git-scm.com/download/win](https://git-scm.com/download/win)
 
-Or with Winget:
+Or install with Winget:
 
 ```powershell
-winget install OpenJS.NodeJS.LTS
+winget install --id Git.Git -e
 ```
+
+## Step 3: Install Node.js If `node` or `npm` Is Missing
 
 ### macOS
 
-Install from:
+Option 1:
 
-- [https://nodejs.org](https://nodejs.org)
+- Download Node.js LTS from [https://nodejs.org](https://nodejs.org)
 
-Or with Homebrew:
+Option 2 with Homebrew:
 
 ```bash
 brew install node
 ```
 
-Then reopen terminal and verify again:
+### Windows
+
+Option 1:
+
+- Download Node.js LTS from [https://nodejs.org](https://nodejs.org)
+
+Option 2 with Winget:
+
+```powershell
+winget install OpenJS.NodeJS.LTS
+```
+
+After installation, close and reopen Terminal or PowerShell, then verify:
 
 ```bash
 node -v
 npm -v
 ```
 
-## Clone The Project
+## Step 4: Clone the GitHub Repository
+
+Git is the tool used to copy the code from GitHub to the laptop.
+
+Run:
 
 ```bash
 git clone https://github.com/dishudhalwal12/lexicourt.git
 cd lexicourt
 ```
 
-## Install Dependencies
+If the folder name on GitHub changes later, use that repository URL instead.
+
+## Step 5: Install the Project Dependencies
+
+Inside the project folder, run:
 
 ```bash
 npm install
 ```
 
-## Create The Local Environment File
+This downloads all required packages for the frontend and backend.
 
-This project needs a local `.env` file for the Gemini server key.
+## Step 6: Create the Local Environment File
+
+This app needs a local `.env` file for the Gemini API key and API port.
 
 ### macOS / Linux
 
@@ -177,33 +147,33 @@ cp .env.example .env
 Copy-Item .env.example .env
 ```
 
-Then open `.env` and set:
+Then open `.env` and make sure it looks like this:
 
 ```env
-GEMINI_API_KEY=PASTE_YOUR_CURRENT_WORKING_GEMINI_KEY_HERE
+GEMINI_API_KEY=PASTE_YOUR_WORKING_GEMINI_API_KEY_HERE
 PORT=8787
 ```
 
 Important:
 
-- use the **same current Gemini key** you already use locally
-- do **not** commit `.env`
-- you do **not** need to regenerate Firebase config
+- Do not commit the `.env` file to GitHub.
+- Keep the Gemini key only on the local laptop.
+- The current project already includes Firebase web configuration in the client code.
 
-## Fastest Way To Run Everything
+## Step 7: Start LexiCourt
 
-From the project root:
+The fastest way to run everything is:
 
 ```bash
 npm run dev:all
 ```
 
-That starts:
+This starts:
 
 - Next.js frontend on `http://127.0.0.1:3000`
-- local API on `http://127.0.0.1:8787`
+- local Node API on `http://127.0.0.1:8787`
 
-## If You Want To Run Them Separately
+If you want to run them separately:
 
 Terminal 1:
 
@@ -217,156 +187,186 @@ Terminal 2:
 npm run dev:api
 ```
 
-## App URLs
+## Step 8: Open the App
 
-Frontend:
+Main app:
 
 - [http://127.0.0.1:3000](http://127.0.0.1:3000)
 
-Common routes:
+Useful pages:
 
 - [http://127.0.0.1:3000/login](http://127.0.0.1:3000/login)
-- [http://127.0.0.1:3000/register](http://127.0.0.1:3000/register)
 - [http://127.0.0.1:3000/dashboard](http://127.0.0.1:3000/dashboard)
 - [http://127.0.0.1:3000/cases](http://127.0.0.1:3000/cases)
+- [http://127.0.0.1:3000/case-detail](http://127.0.0.1:3000/case-detail)
+- [http://127.0.0.1:3000/assistant](http://127.0.0.1:3000/assistant)
+- [http://127.0.0.1:3000/drafts](http://127.0.0.1:3000/drafts)
+- [http://127.0.0.1:3000/timeline](http://127.0.0.1:3000/timeline)
 
-API health:
+API health check:
 
 - [http://127.0.0.1:8787/api/health](http://127.0.0.1:8787/api/health)
 
-## Quick Client Demo Flow
+## Demo Workspace
 
-Use this during the Google Meet / AnyDesk setup:
+For a fast presentation or client meeting, LexiCourt now includes a `Demo Workspace`.
 
-1. Install Git if missing.
-2. Install Node.js LTS if missing.
-3. Clone the repo.
-4. Run `npm install`.
-5. Create `.env`.
-6. Paste the current working Gemini key into `.env`.
-7. Run `npm run dev:all`.
-8. Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
+Use it when:
 
-## If Something Fails
+- you want to show the product quickly
+- Firebase login or live data is not ready
+- you want sample matters, documents, drafts, and timelines already loaded
 
-### 1. `npm` or `node` is not recognized
+How to use it:
 
-Node is not installed correctly or terminal needs reopening.
+1. Start the app with `npm run dev:all`.
+2. Open [http://127.0.0.1:3000](http://127.0.0.1:3000) or [http://127.0.0.1:3000/login](http://127.0.0.1:3000/login).
+3. Click `Demo Workspace`.
+
+The demo mode keeps sample data in browser storage so changes made during the meeting stay visible while you continue clicking around.
+
+## What “Models” LexiCourt Uses
+
+LexiCourt currently uses 2 layers:
+
+1. Gemini API
+
+- Used for richer AI-generated answers, summaries, drafts, and timeline extraction.
+- Requires `GEMINI_API_KEY` in `.env`.
+
+2. Local legal datasets and fallback logic
+
+- Stored inside the `ML/` folder.
+- Used for legal reference retrieval, case insights, and fallback responses if Gemini is unavailable.
+
+So even if Gemini is not available, parts of the app can still respond using local logic and dataset-based fallback behavior.
+
+## Project Scripts
+
+Useful commands:
+
+```bash
+npm run dev
+npm run dev:web
+npm run dev:api
+npm run dev:all
+npm run build
+npm run start
+```
+
+Meaning:
+
+- `npm run dev:web` starts the Next.js frontend
+- `npm run dev:api` starts the local Gemini/data API
+- `npm run dev:all` starts both together
+- `npm run build` checks whether the app builds successfully for production
+
+## Folder Overview
+
+```text
+LexiCourt/
+├── app/                  # Next.js app routes
+├── legacy/               # legacy UI surface mounted inside Next.js
+├── server/               # local Node API and Gemini integration
+├── ML/                   # local legal datasets and fallback logic
+├── public/               # static public assets
+├── context/              # docs and product context
+├── package.json
+├── .env.example
+└── README.md
+```
+
+## Common Problems and Fixes
+
+### Problem: `git` is not recognized
+
+Git is not installed.
 
 Fix:
 
-- reinstall Node LTS
-- close and reopen terminal
+- install Git using the instructions above
+- close and reopen Terminal or PowerShell
 
-### 2. Port 3000 is already in use
+### Problem: `node` or `npm` is not recognized
 
-Run:
+Node.js is not installed correctly or the terminal has not refreshed.
+
+Fix:
+
+- install Node.js LTS
+- close and reopen Terminal or PowerShell
+- run `node -v` and `npm -v` again
+
+### Problem: `npm install` fails
+
+Possible fixes:
+
+- make sure you are inside the project folder
+- make sure internet access is available
+- run `node -v` and confirm Node is installed
+
+### Problem: The frontend or API says the port is already in use
+
+LexiCourt expects:
+
+- frontend on port `3000`
+- API on port `8787`
+
+On macOS/Linux, check what is already using those ports:
 
 ```bash
-npx kill-port 3000
+lsof -nP -iTCP:3000 -sTCP:LISTEN
+lsof -nP -iTCP:8787 -sTCP:LISTEN
 ```
 
-Or change the frontend port manually:
+If you recognize the old process, stop it and start LexiCourt again.
 
-```bash
-next dev --hostname 127.0.0.1 --port 3001
-```
-
-### 3. Port 8787 is already in use
-
-Run:
-
-```bash
-npx kill-port 8787
-```
-
-Or change the API port in `.env`:
-
-```env
-PORT=8788
-```
-
-### 4. Gemini features are not working
+### Problem: The API is not responding
 
 Check:
 
-- `.env` exists
-- `GEMINI_API_KEY` is pasted correctly
-- API is running
-- [http://127.0.0.1:8787/api/health](http://127.0.0.1:8787/api/health) opens
+```bash
+curl http://127.0.0.1:8787/api/health
+```
 
-### 5. Firebase login/data is not working
+If it fails:
 
-The Firebase web config is already in the repo.
+- confirm `.env` exists
+- confirm `PORT=8787`
+- confirm the API was started with `npm run dev:api` or `npm run dev:all`
 
-Check:
+### Problem: AI features are weak or not using Gemini
 
-- internet connection is available
-- Firebase project is still active
-- Firestore / Auth / Storage rules are deployed
+This usually means the Gemini key is missing or invalid.
 
-### 6. UI looks broken after pulling changes
+Fix:
 
-Run:
+- open `.env`
+- confirm `GEMINI_API_KEY` has the working key
+- restart the API server
+
+### Problem: Login or live data is not ready for the meeting
+
+Use the `Demo Workspace` path from the landing page or login page.
+
+## Safe Usage Notes
+
+- Never commit `.env`
+- Never push private API keys to GitHub
+- Prefer the demo workspace for presentations if you are unsure whether live Firebase data is ready
+
+## Quick Repeat Checklist
 
 ```bash
-rm -rf .next
+git clone https://github.com/dishudhalwal12/lexicourt.git
+cd lexicourt
 npm install
+cp .env.example .env
+# add GEMINI_API_KEY in .env
 npm run dev:all
 ```
 
-On Windows PowerShell:
+Then open:
 
-```powershell
-Remove-Item .next -Recurse -Force
-npm install
-npm run dev:all
-```
+- [http://127.0.0.1:3000](http://127.0.0.1:3000)
 
-## Production / Handoff Guidance
-
-For a client laptop demo, local dev mode is enough.
-
-If you want a cleaner permanent client setup later, the next step should be:
-
-- deploy Next.js frontend
-- deploy the Node API securely
-- keep Gemini key on the server only
-
-## Security Note
-
-- Firebase client config can remain in the frontend
-- Gemini API key should remain only in local `.env` or server env
-- Never push `.env` to a public repository
-
-## Current Commands Summary
-
-Install:
-
-```bash
-npm install
-```
-
-Run all:
-
-```bash
-npm run dev:all
-```
-
-Run frontend only:
-
-```bash
-npm run dev:web
-```
-
-Run API only:
-
-```bash
-npm run dev:api
-```
-
-Build:
-
-```bash
-npm run build
-```

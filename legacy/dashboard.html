@@ -48,6 +48,55 @@
 
       let allCases = [];
 
+      function setChartState(state) {
+        document.querySelectorAll(".chart-wrap").forEach((wrap) => {
+          wrap.classList.remove("is-loading", "is-ready");
+          if (state) {
+            wrap.classList.add(state);
+          }
+        });
+      }
+
+      function waitForDashboardCharts(timeoutMs = 4000) {
+        return new Promise((resolve) => {
+          const ready = () => window.lexiCourtCharts && typeof window.lexiCourtCharts.initDashboardCharts === "function";
+          if (ready()) {
+            resolve(window.lexiCourtCharts);
+            return;
+          }
+
+          const startedAt = Date.now();
+          const poll = () => {
+            if (ready()) {
+              resolve(window.lexiCourtCharts);
+              return;
+            }
+
+            if (Date.now() - startedAt >= timeoutMs) {
+              resolve(null);
+              return;
+            }
+
+            window.setTimeout(poll, 60);
+          };
+
+          poll();
+        });
+      }
+
+      async function renderDashboardCharts(payload) {
+        setChartState("is-loading");
+        const charts = await waitForDashboardCharts();
+
+        if (!charts) {
+          setChartState("is-ready");
+          return false;
+        }
+
+        charts.initDashboardCharts(payload);
+        return true;
+      }
+
       function getCaseDate(item) {
         const rawDate = item.filedDate || item.createdAt;
         if (typeof rawDate?.toDate === "function") {
@@ -209,12 +258,12 @@
         document.getElementById("dashboardWinRateCopy").textContent = "No completed matters yet";
         document.getElementById("dashboardHearingsCopy").textContent = "Upcoming hearings will appear here after you add matters with hearing dates.";
         document.getElementById("dashboardCaseTypesCopy").textContent = "Case-type distribution will update once your workspace has live matters.";
-        window.lexiCourtCharts?.initDashboardCharts({
+        renderDashboardCharts({
           monthlyCaseFiled: [0, 0, 0, 0, 0, 0],
           winRateTrend: [0, 0, 0, 0, 0, 0],
           hearingsTrend: [0, 0, 0, 0, 0, 0],
           caseTypeSplit: [0, 0, 0, 0]
-        });
+        }).catch((error) => console.error("Unable to render empty dashboard charts:", error));
       }
 
       function toIsoDate(value) {
@@ -295,7 +344,7 @@
         document.getElementById("dashboardCaseTypesCopy").textContent = cases.length
           ? `Civil ${caseTypeSplit[0]}, Criminal ${caseTypeSplit[1]}, Family ${caseTypeSplit[2]}, Corporate ${caseTypeSplit[3]}`
           : "Case-type distribution will appear once you add matters";
-        window.lexiCourtCharts?.initDashboardCharts({
+        await renderDashboardCharts({
           monthlyCaseFiled: buildMonthlyCaseTrend(cases),
           winRateTrend: winRate,
           hearingsTrend: hearingTrend,
@@ -432,7 +481,7 @@
              const endDate = document.getElementById("dashboardEndDate")?.value || "";
 
              if (startDate && endDate && startDate > endDate) {
-               alert("The start date cannot be later than the end date.");
+               window.lexiCourtUtils?.notify?.("The start date cannot be later than the end date.", "error");
                return;
              }
 

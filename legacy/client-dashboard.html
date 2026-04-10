@@ -175,7 +175,6 @@
               description: eventItem.description || "No description provided."
             }))
           );
-
           document.getElementById("clientCaseTitle").textContent = activeCase?.caseTitle || "Shared matter";
           document.getElementById("clientCaseStatus").innerHTML = renderStatusBadge(activeCase?.status);
           document.getElementById("clientNextHearing").textContent = `Next Hearing • ${formatFirestoreDate(activeCase?.nextHearingDate, "Not scheduled")}`;
