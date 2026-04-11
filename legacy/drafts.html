@@ -166,19 +166,27 @@
               });
 
               const generatedText = response.draft;
-              await saveDraft({
-                caseId: selectedCase.id,
-                draftType: type,
-                inputPayload: {
-                  partyNames,
-                  facts
-                },
-                generatedText,
-                status: "generated",
-                modelName: response.mode === "gemini" ? "gemini-2.5-flash" : "LexiCourt AI"
-              });
-
               renderDraftOutput(type, generatedText);
+
+              try {
+                await saveDraft({
+                  caseId: selectedCase.id,
+                  draftType: type,
+                  inputPayload: {
+                    partyNames,
+                    facts
+                  },
+                  generatedText,
+                  status: "generated",
+                  modelName: response.mode === "gemini" ? "gemini-2.5-flash" : "LexiCourt AI"
+                });
+              } catch (saveError) {
+                console.error(saveError);
+                window.lexiCourtUtils?.notify?.(
+                  "Draft was generated, but it could not be saved to the case history.",
+                  "warning"
+                );
+              }
             } catch (error) {
               console.error(error);
               window.lexiCourtUtils?.notify?.("Draft generation is unavailable right now. You can retry once the live API is ready.", "error");

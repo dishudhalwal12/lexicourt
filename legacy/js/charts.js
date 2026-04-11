@@ -63,6 +63,11 @@
     wrap.classList.add("is-ready");
   }
 
+  function usesStaticDashboardCharts(id) {
+    const page = document.body?.getAttribute("data-page") || "";
+    return page === "dashboard" && !String(id || "").startsWith("admin");
+  }
+
   function animationConfig(type) {
     if (type === "doughnut") {
       return {
@@ -99,6 +104,7 @@
     if (!ctx || typeof Chart === "undefined") {
       return;
     }
+    const staticChart = usesStaticDashboardCharts(id);
 
     const gradient = ctx.createLinearGradient(0, 0, 0, 240);
     gradient.addColorStop(0, "rgba(245,245,247,0.95)");
@@ -120,7 +126,7 @@
       },
       options: {
         maintainAspectRatio: false,
-        animation: animationConfig("bar"),
+        animation: staticChart ? false : animationConfig("bar"),
         plugins: {
           legend: { display: false },
           tooltip: baseTooltip()
@@ -128,6 +134,10 @@
         scales: baseScales()
       }
     });
+
+    if (staticChart) {
+      markChartReady(id);
+    }
   }
 
   function buildAreaChart(id, data, lineColor, fillColor) {
@@ -135,6 +145,7 @@
     if (!ctx || typeof Chart === "undefined") {
       return;
     }
+    const staticChart = usesStaticDashboardCharts(id);
 
     const gradient = ctx.createLinearGradient(0, 0, 0, 280);
     gradient.addColorStop(0, fillColor || "rgba(245,245,247,0.16)");
@@ -161,7 +172,7 @@
       },
       options: {
         maintainAspectRatio: false,
-        animation: animationConfig("line"),
+        animation: staticChart ? false : animationConfig("line"),
         plugins: {
           legend: { display: false },
           tooltip: baseTooltip()
@@ -169,6 +180,10 @@
         scales: baseScales()
       }
     });
+
+    if (staticChart) {
+      markChartReady(id);
+    }
   }
 
   function buildDoughnutChart(id, data) {
@@ -176,6 +191,7 @@
     if (!ctx || typeof Chart === "undefined") {
       return;
     }
+    const staticChart = usesStaticDashboardCharts(id);
 
     new Chart(ctx, {
       type: "doughnut",
@@ -194,7 +210,7 @@
       options: {
         maintainAspectRatio: false,
         cutout: "62%",
-        animation: animationConfig("doughnut"),
+        animation: staticChart ? false : animationConfig("doughnut"),
         plugins: {
           legend: {
             position: "bottom",
@@ -209,6 +225,10 @@
         }
       }
     });
+
+    if (staticChart) {
+      markChartReady(id);
+    }
   }
 
   function zeroSeries(length) {

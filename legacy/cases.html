@@ -78,8 +78,8 @@
         };
       }
 
-      async function loadCases() {
-        const rawCases = await getCasesForCurrentUser();
+      function syncVisibleCases(rawCases) {
+        window.caseLoadErrorMessage = "";
         window.rawCases = rawCases;
         window.realCases = rawCases.map((c) => ({
           id: c.id,
@@ -96,6 +96,50 @@
 
         if (window.renderRows) {
           window.renderRows();
+        }
+      }
+
+      function upsertVisibleCase(caseRecord) {
+        const nextCases = [...(window.rawCases || [])];
+        const existingIndex = nextCases.findIndex((item) => item.id === caseRecord.id);
+
+        if (existingIndex >= 0) {
+          nextCases[existingIndex] = {
+            ...nextCases[existingIndex],
+            ...caseRecord
+          };
+        } else {
+          nextCases.unshift(caseRecord);
+        }
+
+        syncVisibleCases(nextCases);
+      }
+
+      async function loadCases(options = {}) {
+        try {
+          const rawCases = await getCasesForCurrentUser();
+          syncVisibleCases(rawCases);
+          return rawCases;
+        } catch (error) {
+          window.caseLoadErrorMessage =
+            error?.message || "Unable to load live cases from Firebase right now.";
+
+          if (options.preserveExisting && Array.isArray(window.rawCases) && window.rawCases.length) {
+            console.error(error);
+            window.lexiCourtUtils?.notify?.(
+              options.warningMessage || "The case was saved, but the refreshed list could not be loaded.",
+              "warning"
+            );
+            return window.rawCases;
+          }
+
+          window.rawCases = [];
+          window.realCases = [];
+          if (window.renderRows) {
+            window.renderRows();
+          }
+
+          throw error;
         }
       }
 
@@ -164,14 +208,41 @@
                 throw new Error("Please complete the core case fields before saving.");
               }
 
+              let savedCaseRecord = null;
+
               if (caseId) {
                 await updateCase(caseId, payload);
+                savedCaseRecord = {
+                  ...(existingCase || {}),
+                  ...payload,
+                  id: caseId,
+                  caseId: existingCase?.caseId || caseId,
+                  updatedAt: new Date()
+                };
               } else {
-                await createCase(payload);
+                const createdCaseId = await createCase(payload);
+                savedCaseRecord = {
+                  ...payload,
+                  id: createdCaseId,
+                  caseId: createdCaseId,
+                  ownerUid: user.uid,
+                  assignedUserIds: [user.uid],
+                  clientId: "",
+                  createdAt: new Date(),
+                  updatedAt: new Date()
+                };
+              }
+
+              if (savedCaseRecord) {
+                upsertVisibleCase(savedCaseRecord);
               }
 
               bootstrap.Modal.getInstance(document.getElementById("caseModal"))?.hide();
-              await loadCases();
+
+              await loadCases({
+                preserveExisting: true,
+                warningMessage: "The case was saved, but the refreshed case list could not be reloaded from Firebase."
+              });
             } catch (error) {
               console.error(error);
               window.lexiCourtUtils?.notify?.(error.message || "Unable to save the case right now.", "error");
@@ -181,7 +252,15 @@
             }
           });
 
-          await loadCases();
+          try {
+            await loadCases();
+          } catch (error) {
+            console.error(error);
+            window.lexiCourtUtils?.notify?.(
+              error.message || "Unable to load cases from Firebase right now.",
+              "error"
+            );
+          }
         } catch(e) { console.error(e); }
       });
     </script>
@@ -278,7 +357,7 @@
             </div>
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
-          <form id="caseModalForm">
+          <form id="caseModalForm" class="case-modal-form">
             <div class="modal-body case-modal-body">
               <input id="caseModalCaseId" type="hidden" />
               <p class="document-modal-copy">Set up the matter with its court, parties, hearing dates, and internal notes so the workspace stays structured from day one.</p>
@@ -380,7 +459,11 @@
             body.innerHTML = `
               <tr>
                 <td colspan="8" class="metric-label" style="padding: 24px;">
-                  No matters match the current search or filter. Create a new case to begin tracking it in LexiCourt.
+                  ${escapeHtml(
+                    window.caseLoadErrorMessage && !sourceData.length
+                      ? window.caseLoadErrorMessage
+                      : "No matters match the current search or filter. Create a new case to begin tracking it in LexiCourt."
+                  )}
                 </td>
               </tr>
             `;

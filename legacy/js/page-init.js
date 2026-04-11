@@ -331,17 +331,42 @@ function initStoryMotion() {
         ".summary-metric"
     ];
 
-    const elements = [...document.querySelectorAll(selectors.join(","))]
-        .filter((element) => !element.classList.contains("story-reveal"));
+    const elements = [...document.querySelectorAll(selectors.join(","))];
+    const currentPage = document.body?.getAttribute("data-page") || "";
 
     if (!elements.length) {
         return;
     }
 
+    if (currentPage === "dashboard") {
+        elements.forEach((element) => {
+            element.classList.remove("story-reveal");
+            element.classList.remove("is-visible");
+            element.style.removeProperty("--story-delay");
+        });
+        return;
+    }
+
     elements.forEach((element, index) => {
-        element.classList.add("story-reveal");
-        element.style.setProperty("--story-delay", `${Math.min(index * 55, 420)}ms`);
+        if (!element.classList.contains("story-reveal")) {
+            element.classList.add("story-reveal");
+        }
+
+        if (!element.style.getPropertyValue("--story-delay")) {
+            element.style.setProperty("--story-delay", `${Math.min(index * 55, 420)}ms`);
+        }
     });
+
+    const pendingElements = elements.filter((element) => !element.classList.contains("is-visible"));
+
+    if (!pendingElements.length) {
+        return;
+    }
+
+    if (typeof window.IntersectionObserver !== "function") {
+        pendingElements.forEach((element) => element.classList.add("is-visible"));
+        return;
+    }
 
     const observer = new IntersectionObserver(
         (entries) => {
@@ -360,9 +385,17 @@ function initStoryMotion() {
         }
     );
 
-    elements.forEach((element) => observer.observe(element));
+    pendingElements.forEach((element) => observer.observe(element));
+
+    // Fail open so legacy pages never stay blank if the observer lifecycle gets interrupted.
+    const fallbackId = window.setTimeout(() => {
+        pendingElements.forEach((element) => element.classList.add("is-visible"));
+        observer.disconnect();
+        storyMotionCleanup = null;
+    }, 1200);
 
     storyMotionCleanup = () => {
+        window.clearTimeout(fallbackId);
         observer.disconnect();
         storyMotionCleanup = null;
     };
@@ -371,7 +404,6 @@ function initStoryMotion() {
 // Call this function once the DOM is loaded to wire up standard UI elements
 export function initSharedUI() {
     initTopbarChrome();
-    initStoryMotion();
 
     const logoutBtn = document.getElementById("logoutBtn");
     if (logoutBtn) {

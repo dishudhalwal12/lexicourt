@@ -51,6 +51,12 @@ function sortByTimestampAsc(items, key) {
   return [...items].sort((a, b) => toMillis(a[key]) - toMillis(b[key]));
 }
 
+function buildDataAccessError(message, cause) {
+  const error = new Error(message);
+  error.cause = cause;
+  return error;
+}
+
 async function getUserRole() {
   const user = requireAuth();
   try {
@@ -141,12 +147,12 @@ export async function getCasesForCurrentUser() {
 
   const isAdmin = role === "admin";
 
-  try {
-    if (isAdmin) {
-      return getAllCasesAdmin();
-    }
+  if (isAdmin) {
+    return getAllCasesAdmin();
+  }
 
-    if (role === "client") {
+  if (role === "client") {
+    try {
       const shares = await getClientSharedItems(user.uid);
       const seenIds = new Set();
       const sharedCases = [];
@@ -164,32 +170,62 @@ export async function getCasesForCurrentUser() {
       }
 
       return sortByTimestampDesc(sharedCases, "updatedAt");
+    } catch (error) {
+      if (isPermissionDeniedError(error)) {
+        throw buildDataAccessError(
+          "Unable to load the shared cases for this client account from Firebase.",
+          error
+        );
+      }
+
+      throw error;
     }
-
-    const cases = [];
-    const seenIds = new Set();
-
-    const appendSnapshot = (snapshot) => {
-      snapshot.forEach((item) => {
-        if (!seenIds.has(item.id)) {
-          seenIds.add(item.id);
-          cases.push({ ...item.data(), id: item.id });
-        }
-      });
-    };
-
-    appendSnapshot(await getDocs(query(collection(db, "caseFolders"), where("ownerUid", "==", user.uid))));
-    appendSnapshot(await getDocs(query(collection(db, "caseFolders"), where("assignedUserIds", "array-contains", user.uid))));
-    appendSnapshot(await getDocs(query(collection(db, "caseFolders"), where("clientId", "==", user.uid))));
-
-    return sortByTimestampDesc(cases, "updatedAt");
-  } catch (error) {
-    if (isPermissionDeniedError(error)) {
-      return [];
-    }
-
-    throw error;
   }
+
+  const cases = [];
+  const seenIds = new Set();
+  const warnings = [];
+
+  const appendSnapshot = (snapshot) => {
+    snapshot.forEach((item) => {
+      if (!seenIds.has(item.id)) {
+        seenIds.add(item.id);
+        cases.push({ ...item.data(), id: item.id });
+      }
+    });
+  };
+
+  const collectQuery = async (label, sourceQuery) => {
+    try {
+      appendSnapshot(await getDocs(sourceQuery));
+    } catch (error) {
+      if (isPermissionDeniedError(error)) {
+        warnings.push(`${label}: ${error.message || "permission denied"}`);
+        return;
+      }
+
+      throw error;
+    }
+  };
+
+  await collectQuery("owned cases", query(collection(db, "caseFolders"), where("ownerUid", "==", user.uid)));
+  await collectQuery(
+    "assigned cases",
+    query(collection(db, "caseFolders"), where("assignedUserIds", "array-contains", user.uid))
+  );
+
+  if (!cases.length && warnings.length) {
+    throw buildDataAccessError(
+      "Unable to load cases from Firebase. Check Firestore access for this account.",
+      warnings.join("; ")
+    );
+  }
+
+  if (warnings.length) {
+    console.warn("Returning partial case results after Firestore query warnings:", warnings.join("; "));
+  }
+
+  return sortByTimestampDesc(cases, "updatedAt");
 }
 
 export async function getAllCasesAdmin() {

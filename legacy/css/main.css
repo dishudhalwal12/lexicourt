@@ -2784,13 +2784,32 @@ body::after {
   max-width: min(920px, calc(100vw - 32px));
 }
 
+.case-record-modal .modal-dialog-scrollable .modal-content,
+.document-record-modal .modal-dialog-scrollable .modal-content {
+  max-height: min(calc(100dvh - 3rem), 920px);
+}
+
+.case-modal-form,
+.document-modal-form {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .case-record-modal .modal-body,
 .document-record-modal .modal-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding-top: 20px;
 }
 
 .case-record-modal .modal-footer,
 .document-record-modal .modal-footer {
+  flex-shrink: 0;
   background: rgba(245, 245, 248, 0.75);
 }
 
@@ -4221,6 +4240,31 @@ body[data-page="dashboard"] .assistant-askbar .mic-chip {
 
 body[data-page="dashboard"] #dashboardInsightText {
   color: #b8bbc7 !important;
+}
+
+body[data-page="dashboard"] .story-reveal,
+body[data-page="dashboard"] .story-reveal.is-visible {
+  opacity: 1 !important;
+  transform: none !important;
+  filter: none !important;
+  transition: none !important;
+}
+
+body[data-page="dashboard"] .story-reveal::after,
+body[data-page="dashboard"] .story-reveal.is-visible::after {
+  opacity: 0 !important;
+  transition: none !important;
+}
+
+body[data-page="dashboard"] .chart-wrap canvas,
+body[data-page="dashboard"] .chart-wrap.is-ready canvas {
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+
+body[data-page="dashboard"] .chart-wrap.is-loading::before {
+  display: none;
 }
 
 @keyframes pulseCourt {

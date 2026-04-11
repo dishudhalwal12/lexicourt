@@ -4,12 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
+    "dev": "concurrently \"npm:dev:web\" \"npm:dev:api\"",
     "dev:web": "next dev --hostname 127.0.0.1 --port 3000",
     "dev:api": "node server.mjs",
     "dev:all": "concurrently \"npm:dev:web\" \"npm:dev:api\"",
     "build": "next build",
-    "start": "next start",
+    "start": "concurrently \"npm:start:web\" \"npm:api\"",
+    "start:web": "next start",
     "lint": "next lint",
     "api": "node server.mjs",
     "api:dev": "node --watch server.mjs"

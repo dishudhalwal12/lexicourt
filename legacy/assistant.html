@@ -237,18 +237,36 @@
                     : ""
                 ].join("");
 
-                await saveAiChat({
-                  caseId: selectedCase.id,
-                  question,
-                  answer,
-                  sourceDocumentIds: selectedDocument ? [selectedDocument.id] : [],
-                  responseType: "query",
-                  modelName: response.mode === "gemini" ? "gemini-2.5-flash" : "LexiCourt AI"
-                });
-
                 input.value = "";
-                currentChats = await getAiChatsByCase(selectedCase.id);
+                currentChats = [
+                  ...currentChats,
+                  {
+                    id: `local-${Date.now()}`,
+                    question,
+                    answer
+                  }
+                ];
                 renderChatLog(currentChats, selectedCase, selectedDocument);
+
+                try {
+                  await saveAiChat({
+                    caseId: selectedCase.id,
+                    question,
+                    answer,
+                    sourceDocumentIds: selectedDocument ? [selectedDocument.id] : [],
+                    responseType: "query",
+                    modelName: response.mode === "gemini" ? "gemini-2.5-flash" : "LexiCourt AI"
+                  });
+
+                  currentChats = await getAiChatsByCase(selectedCase.id);
+                  renderChatLog(currentChats, selectedCase, selectedDocument);
+                } catch (saveError) {
+                  console.error(saveError);
+                  window.lexiCourtUtils?.notify?.(
+                    "Assistant reply was generated, but it could not be saved to the case history.",
+                    "warning"
+                  );
+                }
               } catch (error) {
                 console.error(error);
                 window.lexiCourtUtils?.notify?.("Assistant reply is unavailable right now. Live API access can be retried at any time.", "error");

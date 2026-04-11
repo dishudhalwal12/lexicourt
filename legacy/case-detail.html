@@ -524,7 +524,7 @@
                 }
               }
 
-              await createDocumentRecord({
+              const documentPayload = {
                 caseId: currentCase.id,
                 fileName,
                 displayTitle: String(formData.get("displayTitle") || "").trim(),
@@ -538,7 +538,19 @@
                 extractedText,
                 notes: String(formData.get("documentNotes") || "").trim(),
                 uploadStatus: "completed"
-              });
+              };
+              const documentId = await createDocumentRecord(documentPayload);
+
+              currentDocuments = [
+                {
+                  ...documentPayload,
+                  id: documentId,
+                  uploadedAt: new Date(),
+                  updatedAt: new Date()
+                },
+                ...currentDocuments.filter((item) => item.id !== documentId)
+              ];
+              renderDocuments(currentDocuments);
 
               bootstrap.Modal.getInstance(document.getElementById("documentRecordModal"))?.hide();
               uploadForm.reset();
@@ -764,7 +776,7 @@
               </div>
               <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
-            <form id="documentRecordForm">
+            <form id="documentRecordForm" class="document-modal-form">
               <div class="modal-body">
                 <p class="document-modal-copy">Upload real case files into Firebase Storage, save document metadata, and keep searchable text ready for AI analysis and courtroom prep.</p>
                 <div class="form-grid">

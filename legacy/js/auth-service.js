@@ -76,6 +76,103 @@ function isRecoverableProfileSyncError(error) {
   );
 }
 
+async function waitForFirestoreAuth(user) {
+  if (!user) {
+    return;
+  }
+
+  try {
+    await user.getIdToken();
+  } catch (error) {
+    console.warn("Unable to eagerly refresh auth token before Firestore sync:", error);
+  }
+
+  if (typeof auth?.authStateReady === "function") {
+    try {
+      await auth.authStateReady();
+    } catch (error) {
+      console.warn("Unable to confirm auth readiness before Firestore sync:", error);
+    }
+  }
+}
+
+async function syncUserProfileDoc(user, profileSnapshot) {
+  const userDocRef = doc(db, "users", user.uid);
+  const payload = {
+    ...profileSnapshot,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  };
+
+  await waitForFirestoreAuth(user);
+
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await setDoc(userDocRef, payload, { merge: true });
+      return;
+    } catch (error) {
+      lastError = error;
+
+      if (!isPermissionDeniedError(error) || attempt === 1) {
+        throw error;
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      await waitForFirestoreAuth(user);
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+}
+
+async function ensureUserProfileDoc(user, overrides = {}) {
+  if (!user?.uid) {
+    return null;
+  }
+
+  const userDocRef = doc(db, "users", user.uid);
+  const fallbackProfile = buildAuthFallbackProfile(user, {
+    uid: user.uid,
+    ...overrides
+  });
+
+  await waitForFirestoreAuth(user);
+
+  try {
+    const docSnap = await getDoc(userDocRef);
+
+    if (docSnap.exists()) {
+      const profile = docSnap.data();
+      writeCachedUserProfileSnapshot({
+        uid: user.uid,
+        ...profile
+      });
+      return profile;
+    }
+  } catch (error) {
+    if (!isRecoverableProfileSyncError(error)) {
+      throw error;
+    }
+  }
+
+  try {
+    await syncUserProfileDoc(user, fallbackProfile);
+  } catch (error) {
+    if (!isRecoverableProfileSyncError(error)) {
+      throw error;
+    }
+
+    console.warn("Falling back to local profile cache after profile recovery:", error);
+  }
+
+  writeCachedUserProfileSnapshot(fallbackProfile);
+  return fallbackProfile;
+}
+
 function writeCachedUserProfileSnapshot(profile) {
   if (typeof window === "undefined" || !profile?.uid) {
     return;
@@ -152,11 +249,7 @@ export async function registerUser(email, password, fullName, role, options = {}
     });
 
     try {
-      await setDoc(doc(db, "users", user.uid), {
-        ...profileSnapshot,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
+      await syncUserProfileDoc(user, profileSnapshot);
     } catch (error) {
       if (!isRecoverableProfileSyncError(error)) {
         throw error;
@@ -177,6 +270,7 @@ export async function registerUser(email, password, fullName, role, options = {}
 export async function loginUser(email, password) {
   try {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    await ensureUserProfileDoc(userCredential.user);
     return userCredential.user;
   } catch (error) {
     console.error("Error logging in:", error);
@@ -188,44 +282,13 @@ export async function loginWithGoogle() {
   try {
     const result = await signInWithPopup(auth, googleProvider);
     const user = result.user;
-    const userDocRef = doc(db, "users", user.uid);
     const fallbackProfile = buildAuthFallbackProfile(user, {
       fullName: user.displayName || "Google User",
       role: "lawyer",
       phone: user.phoneNumber || ""
     });
-    let docSnap = null;
 
-    try {
-      docSnap = await getDoc(userDocRef);
-    } catch (error) {
-      if (!isRecoverableProfileSyncError(error)) {
-        throw error;
-      }
-    }
-
-    if (!docSnap || !docSnap.exists()) {
-      try {
-        await setDoc(userDocRef, {
-          ...fallbackProfile,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
-      } catch (error) {
-        if (!isRecoverableProfileSyncError(error)) {
-          throw error;
-        }
-
-        console.warn("Falling back to local profile cache after Google sign in:", error);
-      }
-
-      writeCachedUserProfileSnapshot(fallbackProfile);
-    } else {
-      writeCachedUserProfileSnapshot({
-        uid: user.uid,
-        ...docSnap.data()
-      });
-    }
+    await ensureUserProfileDoc(user, fallbackProfile);
 
     return user;
   } catch (error) {
@@ -268,6 +331,10 @@ export async function getCurrentUserProfile(uid, options = {}) {
         return profile;
       }
 
+      if (auth.currentUser && auth.currentUser.uid === uid) {
+        return ensureUserProfileDoc(auth.currentUser, { uid });
+      }
+
       if (cachedProfile) {
         return cachedProfile;
       }
@@ -308,12 +375,12 @@ export async function getCurrentUserProfile(uid, options = {}) {
 export function getDashboardPathForRole(role) {
   switch (String(role || "lawyer").toLowerCase()) {
     case "admin":
-      return "admin.html";
+      return "/admin";
     case "client":
-      return "client-dashboard.html";
+      return "/client-dashboard";
     case "lawyer":
     default:
-      return "dashboard.html";
+      return "/dashboard";
   }
 }
 

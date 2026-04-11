@@ -6,6 +6,10 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isSelf(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
     function hasUserProfile() {
       return isAuthenticated() &&
         exists(/databases/$(database)/documents/users/$(request.auth.uid));
@@ -32,6 +36,25 @@ service cloud.firestore {
 
     function isClient() {
       return isActiveUser() && getUserRole() == 'client';
+    }
+
+    function isSelfCreatableRole(role) {
+      return role == 'lawyer' || role == 'client';
+    }
+
+    function canCreateOwnUserProfile(userId) {
+      return isSelf(userId) &&
+        request.resource.data.uid == userId &&
+        request.resource.data.isActive == true &&
+        isSelfCreatableRole(request.resource.data.role);
+    }
+
+    function canUpdateOwnUserProfile(userId) {
+      return isSelf(userId) &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.email == resource.data.email &&
+        request.resource.data.isActive == resource.data.isActive;
     }
 
     function shareDocId(caseId) {
@@ -69,26 +92,11 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow create: if (
-        isAuthenticated() &&
-        request.auth.uid == userId &&
-        request.resource.data.uid == userId &&
-        (
-          request.resource.data.role == 'lawyer' ||
-          request.resource.data.role == 'client'
-        ) &&
-        request.resource.data.isActive == true
-      ) || isAdmin();
+      allow create: if isAdmin() || canCreateOwnUserProfile(userId);
 
-      allow read: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
+      allow read: if isAdmin() || isSelf(userId);
 
-      allow update: if isAdmin() || (
-        isActiveUser() &&
-        request.auth.uid == userId &&
-        request.resource.data.uid == resource.data.uid &&
-        request.resource.data.role == resource.data.role &&
-        request.resource.data.email == resource.data.email
-      );
+      allow update: if isAdmin() || canUpdateOwnUserProfile(userId);
 
       allow delete: if isAdmin();
     }
