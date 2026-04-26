@@ -20,12 +20,13 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
     />
     <link rel="stylesheet" href="css/main.css" />
-    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module" src="js/firebase-config.js?v=fallback-20260426"></script>
     <script type="module">
       import { protectPage } from "./js/auth-guard.js";
       import { initSharedUI } from "./js/page-init.js";
       import { getCurrentUserProfile } from "./js/auth-service.js";
-      import { updateCurrentUserProfile } from "./js/firestore-service.js";
+      import { updateCurrentUserProfile } from "./js/firestore-service.js?v=local-fallback-20260426";
+      import { checkApiHealth, getStoredAiApiKeys, storeAiApiKeys } from "./js/api-client.js?v=local-fallback-20260426";
 
       function dashboardHrefForRole(role) {
         if (role === "admin") {
@@ -49,6 +50,10 @@
           const saveButton = document.getElementById("settingsSaveBtn");
           const saveState = document.getElementById("settingsSaveState");
           const dashboardLink = document.getElementById("settingsOverviewLink");
+          const aiKeysForm = document.getElementById("aiKeysForm");
+          const aiKeysInput = document.getElementById("aiApiKeys");
+          const aiKeysState = document.getElementById("aiKeysState");
+          const apiHealthState = document.getElementById("apiHealthState");
 
           if (dashboardLink) {
             dashboardLink.href = dashboardHrefForRole(currentProfile?.role);
@@ -61,6 +66,16 @@
           document.getElementById("settingsRole").value = String(currentProfile?.role || "lawyer").toUpperCase();
           document.getElementById("settingsStatus").textContent = currentProfile?.isActive ? "Active Workspace" : "Inactive Workspace";
           document.getElementById("settingsStatus").className = currentProfile?.isActive ? "mini-pill" : "mini-pill status-closed";
+          aiKeysInput.value = getStoredAiApiKeys().join("\n");
+
+          try {
+            const health = await checkApiHealth();
+            apiHealthState.textContent = health.geminiConfigured
+              ? "Server Gemini key is configured."
+              : "Server Gemini key is not configured. Add browser fallback keys below.";
+          } catch (error) {
+            apiHealthState.textContent = "Local API server is unreachable.";
+          }
 
           form?.addEventListener("submit", async (event) => {
             event.preventDefault();
@@ -84,6 +99,14 @@
               saveButton.disabled = false;
               saveButton.textContent = "Save Settings";
             }
+          });
+
+          aiKeysForm?.addEventListener("submit", (event) => {
+            event.preventDefault();
+            const savedKeys = storeAiApiKeys(aiKeysInput.value);
+            aiKeysState.textContent = savedKeys.length
+              ? `${savedKeys.length} fallback Gemini key${savedKeys.length === 1 ? "" : "s"} saved for this browser.`
+              : "Fallback Gemini keys cleared.";
           });
         } catch (error) {
           console.error(error);
@@ -177,6 +200,36 @@
           <div class="card-head">
             <div class="card-title-wrap">
               <span class="card-icon"><i class="bi bi-shield-lock"></i></span>
+              <h2 class="card-title">AI API Fallback</h2>
+            </div>
+          </div>
+
+          <form id="aiKeysForm" class="form-grid settings-form-grid">
+            <div class="settings-span-full">
+              <label class="section-label" for="aiApiKeys">Gemini API Keys</label>
+              <textarea class="app-textarea" id="aiApiKeys" rows="5" placeholder="Paste one Gemini API key per line. The server will try them in order if the main key hits a limit."></textarea>
+            </div>
+            <div class="settings-actions settings-span-full">
+              <button id="aiKeysSaveBtn" class="btn-accent" type="submit">Save AI Keys</button>
+              <span id="aiKeysState" class="metric-label">Keys are stored locally in this browser only.</span>
+            </div>
+          </form>
+
+          <div class="doc-list" style="margin-top: 18px;">
+            <div class="doc-row">
+              <div>
+                <div class="list-title">Gemini 2.5 Flash</div>
+                <div id="apiHealthState" class="metric-label">Checking local API status...</div>
+              </div>
+              <span class="mini-pill">Runtime</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel-card">
+          <div class="card-head">
+            <div class="card-title-wrap">
+              <span class="card-icon"><i class="bi bi-shield-check"></i></span>
               <h2 class="card-title">Workspace Notes</h2>
             </div>
           </div>

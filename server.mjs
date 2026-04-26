@@ -114,7 +114,37 @@ function fallbackAssistantResponse({ question, references, insights }) {
 }
 
 function fallbackDraft({ caseData, draftType, facts }) {
-  return `IN THE MATTER OF ${caseData.caseTitle || "THE PRESENT CASE"}\n\n${draftType.toUpperCase()}\n\nCase Number: ${caseData.caseNumber || caseData.caseId || caseData.id || "N/A"}\nCourt: ${caseData.courtName || "N/A"}\n\nFacts:\n${facts || "No facts provided."}\n\nThis is a locally generated fallback draft. Configure Gemini to enable richer drafting output.`;
+  const type = String(draftType || "Draft").toUpperCase();
+  return [
+    `IN THE COURT OF ${caseData.courtName || "[COURT NAME]"}`,
+    "",
+    `CASE NO.: ${caseData.caseNumber || caseData.caseId || caseData.id || "[CASE NUMBER]"}`,
+    "",
+    `IN THE MATTER OF: ${caseData.caseTitle || "[PARTY NAMES]"}`,
+    "",
+    type,
+    "",
+    "MOST RESPECTFULLY SHOWETH:",
+    "",
+    `1. That the present matter concerns ${caseData.caseTitle || "the parties named above"} and is presently recorded as a ${caseData.matterType || "legal"} matter.`,
+    `2. That the relevant facts/instructions provided for this draft are: ${facts || "[ADD MATERIAL FACTS AND PROCEDURAL HISTORY]"}`,
+    "3. That this draft is prepared only on the basis of the available case metadata and user instructions. Any missing dates, annexures, orders, and statutory references should be verified before filing.",
+    "",
+    "GROUNDS / AVERMENTS",
+    "",
+    "A. Because the facts and documents placed on record require appropriate consideration by this Hon'ble Court/Authority.",
+    "B. Because no unsupported factual assertion should be included without verification from the case file.",
+    "",
+    "PRAYER",
+    "",
+    "It is therefore most respectfully prayed that this Hon'ble Court/Authority may be pleased to pass appropriate orders in the interest of justice.",
+    "",
+    "PLACE: [PLACE]",
+    "DATE: [DATE]",
+    "",
+    "COUNSEL / DEPONENT",
+    "[NAME AND SIGNATURE]"
+  ].join("\n");
 }
 
 function fallbackTimeline({ caseData }) {
@@ -197,10 +227,11 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && req.url === "/api/assistant/chat") {
       const body = await parseJsonBody(req);
+      const apiKeys = body.apiKeys || [];
       const references = datasetEngine.retrieveLegalReferences(body.question || "", 5);
       const insights = datasetEngine.buildCaseInsights(body);
 
-      if (!isGeminiConfigured()) {
+      if (!isGeminiConfigured(apiKeys)) {
         return sendJson(res, 200, {
           ok: true,
           mode: "fallback",
@@ -209,16 +240,18 @@ const server = createServer(async (req, res) => {
       }
 
       const answer = await generateGeminiText({
-        systemInstruction: "You are LexiCourt AI, an Indian legal workflow assistant. Be practical, grounded, and cautious. Use provided case context first. Do not fabricate statutes or procedural facts. If context is insufficient, say so clearly.",
+        systemInstruction: "You are LexiCourt AI, a senior Indian legal assistant for lawyers. Be professional, practical, and easy to understand. Use the selected case and document context first. Never invent facts, dates, orders, parties, statutes, citations, or procedural history. Flag uncertainty plainly and suggest verification where needed.",
         userPrompt: buildAssistantPrompt({
           caseData: body.caseData,
           documents: body.documents,
+          selectedDocumentId: body.selectedDocumentId,
           question: body.question,
           references,
           insights,
           history: body.history
         }),
-        temperature: 0.25
+        temperature: 0.2,
+        apiKeys
       });
 
       return sendJson(res, 200, {
@@ -232,8 +265,9 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && req.url === "/api/drafts/generate") {
       const body = await parseJsonBody(req);
+      const apiKeys = body.apiKeys || [];
 
-      if (!isGeminiConfigured()) {
+      if (!isGeminiConfigured(apiKeys)) {
         return sendJson(res, 200, {
           ok: true,
           mode: "fallback",
@@ -242,9 +276,10 @@ const server = createServer(async (req, res) => {
       }
 
       const draft = await generateGeminiText({
-        systemInstruction: "You are LexiCourt Draft AI. Draft polished first-pass Indian legal documents. Maintain formal structure, legal tone, and practical readability. Do not invent procedural history that is not supported by provided context.",
+        systemInstruction: "You are LexiCourt Draft AI, an Indian legal drafting assistant. Produce a serious first-pass court/practice draft with placeholders where facts are missing. Maintain formal structure, plain legal language, and filing-aware formatting. Do not invent facts, dates, orders, annexures, prayers, or procedural history.",
         userPrompt: buildDraftPrompt(body),
-        temperature: 0.35
+        temperature: 0.25,
+        apiKeys
       });
 
       return sendJson(res, 200, {
@@ -256,8 +291,9 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && req.url === "/api/timelines/generate") {
       const body = await parseJsonBody(req);
+      const apiKeys = body.apiKeys || [];
 
-      if (!isGeminiConfigured()) {
+      if (!isGeminiConfigured(apiKeys)) {
         return sendJson(res, 200, {
           ok: true,
           mode: "fallback",
@@ -268,7 +304,8 @@ const server = createServer(async (req, res) => {
       const result = await generateGeminiJson({
         systemInstruction: "You are LexiCourt Timeline AI. Extract structured litigation chronology from the supplied document context. Only include reasonably supported events and keep them concise.",
         userPrompt: buildTimelinePrompt(body),
-        temperature: 0.2
+        temperature: 0.15,
+        apiKeys
       });
 
       return sendJson(res, 200, {
@@ -280,9 +317,10 @@ const server = createServer(async (req, res) => {
 
     if (req.method === "POST" && req.url === "/api/summaries/generate") {
       const body = await parseJsonBody(req);
+      const apiKeys = body.apiKeys || [];
       const insights = datasetEngine.buildCaseInsights(body);
 
-      if (!isGeminiConfigured()) {
+      if (!isGeminiConfigured(apiKeys)) {
         return sendJson(res, 200, {
           ok: true,
           mode: "fallback",
@@ -297,7 +335,8 @@ const server = createServer(async (req, res) => {
           documents: body.documents,
           insights
         }),
-        temperature: 0.2
+        temperature: 0.15,
+        apiKeys
       });
 
       return sendJson(res, 200, {

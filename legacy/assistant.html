@@ -20,7 +20,7 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
     />
     <link rel="stylesheet" href="css/main.css" />
-    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module" src="js/firebase-config.js?v=fallback-20260426"></script>
     <script type="module">
       import { protectPage } from "./js/auth-guard.js";
       import { initSharedUI } from "./js/page-init.js";
@@ -31,8 +31,8 @@
         saveAiChat,
         getCaseIdFromUrl,
         buildCaseUrl
-      } from "./js/firestore-service.js";
-      import { chatWithAssistant } from "./js/api-client.js";
+      } from "./js/firestore-service.js?v=local-fallback-20260426";
+      import { chatWithAssistant } from "./js/api-client.js?v=local-fallback-20260426";
 
       function escapeHtml(value) {
         return String(value ?? "")
@@ -41,6 +41,15 @@
           .replaceAll(">", "&gt;")
           .replaceAll('"', "&quot;")
           .replaceAll("'", "&#39;");
+      }
+
+      async function readFileAsText(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => reject(new Error("Unable to read the selected file."));
+          reader.readAsText(file);
+        });
       }
 
       function toIsoDate(value) {
@@ -149,7 +158,11 @@
           const cases = await getCasesForCurrentUser();
           const caseSelect = document.getElementById("assistantCaseSelect");
           const input = document.getElementById("assistantInput");
+          const uploadInput = document.getElementById("assistantFileUpload");
+          const uploadBtn = document.getElementById("assistantUploadBtn");
           const sendBtn = document.getElementById("assistantSendBtn");
+          let pendingFileContext = "";
+          let pendingFileName = "";
           const requestedCaseId = getCaseIdFromUrl();
           const selectedCase = cases.find((item) => item.id === requestedCaseId) || cases[0];
 
@@ -201,6 +214,38 @@
             });
           });
 
+          if (uploadBtn && uploadInput) {
+            uploadBtn.addEventListener("click", () => uploadInput.click());
+            uploadInput.addEventListener("change", async () => {
+              const file = uploadInput.files?.[0];
+              if (!file) return;
+              
+              if (!file.name.toLowerCase().endsWith(".txt")) {
+                window.lexiCourtUtils?.notify?.("Please upload a .txt file for context.", "warning");
+                uploadInput.value = "";
+                return;
+              }
+
+              try {
+                pendingFileContext = await readFileAsText(file);
+                pendingFileName = file.name;
+                
+                const indicator = document.getElementById("fileContextIndicator");
+                const nameDisplay = document.getElementById("pendingFileNameDisplay");
+                if (indicator && nameDisplay) {
+                  indicator.classList.remove("is-hidden");
+                  nameDisplay.textContent = file.name;
+                }
+                
+                window.lexiCourtUtils?.notify?.(`Context loaded from ${file.name}. It will be included with your next message.`, "success");
+                uploadBtn.innerHTML = `<i class="bi bi-file-earmark-check"></i> Replace File`;
+              } catch (err) {
+                console.error(err);
+                window.lexiCourtUtils?.notify?.("Failed to read file context.", "error");
+              }
+            });
+          }
+
           if (sendBtn && input) {
             sendBtn.addEventListener("click", async () => {
               const question = input.value.trim();
@@ -215,9 +260,13 @@
               sendBtn.innerHTML = `<i class="bi bi-hourglass-split"></i> Thinking`;
 
               try {
+                const fullQuestion = pendingFileContext 
+                  ? `[Context from file ${pendingFileName}]:\n${pendingFileContext}\n\n[User Question]:\n${question}`
+                  : question;
+
                 const response = await chatWithAssistant({
                   ...buildCasePayload(selectedCase, documents, currentChats),
-                  question,
+                  question: fullQuestion,
                   selectedDocumentId: selectedDocument?.id || null
                 });
 
@@ -271,6 +320,20 @@
                 console.error(error);
                 window.lexiCourtUtils?.notify?.("Assistant reply is unavailable right now. Live API access can be retried at any time.", "error");
               } finally {
+                // Clear context after use or keep it? The user said "so it can use it to learn", 
+                // which might imply a persistent state. But current logic clears it.
+                // I will clear it to keep it simple, but the UI will reflect that.
+                pendingFileContext = "";
+                pendingFileName = "";
+                
+                const indicator = document.getElementById("fileContextIndicator");
+                if (indicator) indicator.classList.add("is-hidden");
+                
+                if (uploadBtn) {
+                  uploadBtn.innerHTML = `<i class="bi bi-file-earmark-arrow-up"></i> Upload Context File`;
+                }
+                if (uploadInput) uploadInput.value = "";
+                
                 sendBtn.disabled = false;
                 sendBtn.innerHTML = `<i class="bi bi-send-fill"></i> Send`;
               }
@@ -345,6 +408,24 @@
             <select class="app-select" id="assistantDocumentSelect"></select>
           </div>
           <div class="panel-card" style="padding: 18px;">
+            <div class="card-head" style="margin-bottom: 12px;">
+              <span class="section-label">Case Learning</span>
+            </div>
+            <p class="metric-label" style="margin-bottom: 14px;">Upload a .txt file to provide additional context or hearing transcripts for the AI to analyze.</p>
+            <input id="assistantFileUpload" type="file" accept=".txt" style="display: none;" />
+            <button id="assistantUploadBtn" class="btn-dark w-100 mb-3" type="button">
+              <i class="bi bi-file-earmark-arrow-up"></i> Upload Context File
+            </button>
+            <div id="fileContextIndicator" class="is-hidden" style="padding: 12px; border-radius: 12px; background: rgba(25, 135, 84, 0.08); border: 1px solid rgba(25, 135, 84, 0.2);">
+              <div class="d-flex align-items-center gap-2 mb-1">
+                <i class="bi bi-check-circle-fill text-success"></i>
+                <strong style="font-size: 13px;">Learning Active</strong>
+              </div>
+              <div id="pendingFileNameDisplay" class="metric-label" style="font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"></div>
+            </div>
+          </div>
+
+          <div class="panel-card" style="padding: 18px;">
             <span class="section-label">Suggested prompts</span>
             <div class="stack-md">
               <button class="btn-dark w-100 justify-content-start" type="button" data-prompt="What was the last order passed?">
@@ -369,13 +450,13 @@
               </div>
             </div>
             <div id="assistantChatLog" class="chat-log"></div>
-            <div class="chat-input-row">
-              <input id="assistantInput" class="app-input" type="text" placeholder="Ask about the selected case file" />
-              <button id="assistantSendBtn" class="btn-accent" type="button">
-                <i class="bi bi-send-fill"></i>
-                Send
-              </button>
-            </div>
+             <div class="chat-input-row">
+               <input id="assistantInput" class="app-input" type="text" placeholder="Ask about the selected case file" />
+               <button id="assistantSendBtn" class="btn-accent" type="button" style="flex-shrink: 0;">
+                 <i class="bi bi-send-fill"></i>
+                 Send
+               </button>
+             </div>
           </div>
         </section>
       </section>

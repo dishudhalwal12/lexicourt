@@ -7,6 +7,28 @@ import "./globals.css";
 
 const rootHydrationGuardScript = `
   (() => {
+    const isRecoverableFirebasePermission = (value) => {
+      const text = String(value && (value.message || value.code || value) || "");
+      return /permission-denied|missing or insufficient permissions/i.test(text);
+    };
+
+    const originalConsoleError = console.error.bind(console);
+    console.error = (...args) => {
+      if (args.some(isRecoverableFirebasePermission)) {
+        console.warn("[LexiCourt Firebase fallback]", ...args);
+        return;
+      }
+
+      originalConsoleError(...args);
+    };
+
+    window.addEventListener("unhandledrejection", (event) => {
+      if (isRecoverableFirebasePermission(event.reason)) {
+        event.preventDefault();
+        console.warn("[LexiCourt Firebase fallback] Recovered from denied Firebase operation.", event.reason);
+      }
+    });
+
     const exactAttributes = new Set(["bis_register"]);
     const prefixAttributes = ["__processed_"];
 

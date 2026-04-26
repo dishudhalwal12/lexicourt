@@ -3,15 +3,19 @@ function truncateText(text, maxLength = 1400) {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength)}...`;
 }
 
-export function buildAssistantPrompt({ caseData = {}, documents = [], question = "", references = [], insights = {}, history = [] }) {
-  const contextDocs = documents
-    .slice(0, 3)
+export function buildAssistantPrompt({ caseData = {}, documents = [], selectedDocumentId = "", question = "", references = [], insights = {}, history = [] }) {
+  const selectedDocument = documents.find((doc) => doc.id === selectedDocumentId);
+  const orderedDocuments = selectedDocument
+    ? [selectedDocument, ...documents.filter((doc) => doc.id !== selectedDocumentId)]
+    : documents;
+  const contextDocs = orderedDocuments
+    .slice(0, 4)
     .map((doc, index) => {
       const text = doc.extractedText || doc.rawTextContent || "";
       return [
-        `Document ${index + 1}: ${doc.displayTitle || doc.fileName || "Untitled"}`,
+        `Document ${index + 1}${doc.id === selectedDocumentId ? " (selected)" : ""}: ${doc.displayTitle || doc.fileName || "Untitled"}`,
         `Type: ${doc.documentType || "unknown"}`,
-        `Excerpt: ${truncateText(text, 900)}`
+        `Excerpt: ${truncateText(text, doc.id === selectedDocumentId ? 1500 : 900)}`
       ].join("\n");
     })
     .join("\n\n");
@@ -55,6 +59,8 @@ Answer Rules:
 - Then add "Support:" with only the most relevant factual basis.
 - Then add "Next Steps:" with up to 3 bullets only if useful.
 - If the file context is insufficient, say exactly what is missing.
+- Use selected document context first when a document is selected.
+- Keep the tone like a careful lawyer explaining strategy to another lawyer or client-facing team member.
   `.trim();
 }
 
@@ -83,8 +89,9 @@ ${contextDocs || "No supporting document excerpts provided."}
 Draft Rules:
 - Use a disciplined Indian legal drafting tone.
 - Do not invent facts, dates, or orders.
-- Keep the draft concise but court-ready.
-- Use headings only where appropriate for the document type.
+- Include a proper title/court heading, party block, factual recitals, grounds/averments, prayer/relief, verification or signature block where appropriate.
+- Use bracketed placeholders like [DATE] or [COURT NAME] for missing mandatory facts.
+- Keep the draft concise but genuinely usable as a first pass.
   `.trim();
 }
 

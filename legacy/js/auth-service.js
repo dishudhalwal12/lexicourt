@@ -14,11 +14,12 @@ import {
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.9.0/firebase-firestore.js";
 
-const PUBLIC_ALLOWED_ROLES = ["lawyer"];
+const PUBLIC_ALLOWED_ROLES = ["lawyer", "client"];
 const ALL_ALLOWED_ROLES = ["lawyer", "admin", "client"];
 const POST_AUTH_INTENT_KEY = "lexicourt:post-auth-intent";
 const POST_AUTH_INTENT_TTL_MS = 15000;
 const USER_PROFILE_CACHE_KEY = "lexicourt:user-profile";
+const LOCAL_DB_KEY = "lexicourt:local-db:v2";
 
 function normalizeRole(role, allowAdmin = false) {
   const normalized = String(role || "lawyer").toLowerCase();
@@ -191,8 +192,59 @@ function writeCachedUserProfileSnapshot(profile) {
         practiceName: profile.practiceName || ""
       })
     );
+    upsertLocalUserProfile(profile);
   } catch (error) {
     console.warn("Unable to cache user profile:", error);
+  }
+}
+
+function upsertLocalUserProfile(profile) {
+  if (typeof window === "undefined" || !profile?.uid) {
+    return;
+  }
+
+  try {
+    const emptyDb = {
+      caseFolders: [],
+      documents: [],
+      drafts: [],
+      timelines: [],
+      summaries: [],
+      aiChats: [],
+      readinessChecks: [],
+      mlPredictions: [],
+      clientShares: [],
+      users: []
+    };
+    const dbState = {
+      ...emptyDb,
+      ...JSON.parse(window.localStorage.getItem(LOCAL_DB_KEY) || "{}")
+    };
+    const users = dbState.users || [];
+    const normalizedProfile = {
+      id: profile.uid,
+      uid: profile.uid,
+      fullName: profile.fullName || "",
+      email: String(profile.email || "").toLowerCase(),
+      role: String(profile.role || "lawyer").toLowerCase(),
+      phone: profile.phone || "",
+      isActive: profile.isActive !== false,
+      practiceName: profile.practiceName || "",
+      updatedAt: new Date().toISOString()
+    };
+    const existingIndex = users.findIndex((item) => item.uid === profile.uid || item.id === profile.uid);
+    if (existingIndex >= 0) {
+      users[existingIndex] = {
+        ...users[existingIndex],
+        ...normalizedProfile
+      };
+    } else {
+      users.unshift(normalizedProfile);
+    }
+    dbState.users = users;
+    window.localStorage.setItem(LOCAL_DB_KEY, JSON.stringify(dbState));
+  } catch (error) {
+    console.warn("Unable to cache local user directory:", error);
   }
 }
 
@@ -262,7 +314,7 @@ export async function registerUser(email, password, fullName, role, options = {}
 
     return user;
   } catch (error) {
-    console.error("Error registering user:", error);
+    console.warn("Error registering user:", error);
     throw error;
   }
 }
@@ -273,7 +325,7 @@ export async function loginUser(email, password) {
     await ensureUserProfileDoc(userCredential.user);
     return userCredential.user;
   } catch (error) {
-    console.error("Error logging in:", error);
+    console.warn("Error logging in:", error);
     throw error;
   }
 }
@@ -292,7 +344,7 @@ export async function loginWithGoogle() {
 
     return user;
   } catch (error) {
-    console.error("Error with Google sign in:", error);
+    console.warn("Error with Google sign in:", error);
     throw error;
   }
 }

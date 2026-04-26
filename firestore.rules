@@ -23,38 +23,37 @@ service cloud.firestore {
 
     function isActiveUser() {
       return hasUserProfile() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true;
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isActive == true ||
+         !('isActive' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data));
     }
 
     function isAdmin() {
-      return isActiveUser() && getUserRole() == 'admin';
+      return isActiveUser() && getUserRole() != null && getUserRole().lower() == 'admin';
     }
 
     function isLawyer() {
-      return isActiveUser() && getUserRole() == 'lawyer';
+      return isActiveUser() && getUserRole() != null && getUserRole().lower() == 'lawyer';
     }
 
     function isClient() {
-      return isActiveUser() && getUserRole() == 'client';
+      return isActiveUser() && getUserRole() != null && getUserRole().lower() == 'client';
     }
 
     function isSelfCreatableRole(role) {
-      return role == 'lawyer' || role == 'client';
+      return role != null && (role.lower() == 'lawyer' || role.lower() == 'client');
     }
 
     function canCreateOwnUserProfile(userId) {
       return isSelf(userId) &&
         request.resource.data.uid == userId &&
-        request.resource.data.isActive == true &&
         isSelfCreatableRole(request.resource.data.role);
     }
 
     function canUpdateOwnUserProfile(userId) {
       return isSelf(userId) &&
         request.resource.data.uid == resource.data.uid &&
-        request.resource.data.role == resource.data.role &&
-        request.resource.data.email == resource.data.email &&
-        request.resource.data.isActive == resource.data.isActive;
+        ('role' in resource.data) &&
+        request.resource.data.role.lower() == resource.data.role.lower();
     }
 
     function shareDocId(caseId) {
@@ -62,8 +61,15 @@ service cloud.firestore {
     }
 
     function hasClientShare(caseId) {
-      return isClient() &&
+      return isAuthenticated() &&
         exists(/databases/$(database)/documents/clientShares/$(shareDocId(caseId)));
+    }
+
+    function clientEmailMatchesCase(data) {
+      return isClient() &&
+        request.auth.token.email != null &&
+        data.clientEmail != null &&
+        data.clientEmail == request.auth.token.email;
     }
 
     function canReadCaseResource(caseId, data) {
@@ -72,7 +78,7 @@ service cloud.firestore {
           data.ownerUid == request.auth.uid ||
           (data.assignedUserIds != null && request.auth.uid in data.assignedUserIds)
         )
-      ) || hasClientShare(caseId);
+      ) || hasClientShare(caseId) || clientEmailMatchesCase(data);
     }
 
     function canReadCaseById(caseId) {
@@ -91,10 +97,23 @@ service cloud.firestore {
       );
     }
 
+    function canClientUploadToCase(caseId) {
+      return isClient() &&
+        exists(/databases/$(database)/documents/caseFolders/$(caseId)) &&
+        canReadCaseResource(
+          caseId,
+          get(/databases/$(database)/documents/caseFolders/$(caseId)).data
+        );
+    }
+
     match /users/{userId} {
       allow create: if isAdmin() || canCreateOwnUserProfile(userId);
 
-      allow read: if isAdmin() || isSelf(userId);
+      allow read: if isAdmin() || isSelf(userId) || (
+        isLawyer() &&
+        resource.data.role != null &&
+        resource.data.role.lower() == 'client'
+      );
 
       allow update: if isAdmin() || canUpdateOwnUserProfile(userId);
 
@@ -121,7 +140,8 @@ service cloud.firestore {
     }
 
     match /documents/{docId} {
-      allow create: if canManageCaseById(request.resource.data.caseId);
+      allow create: if canManageCaseById(request.resource.data.caseId) ||
+        canClientUploadToCase(request.resource.data.caseId);
       allow read: if canReadCaseById(resource.data.caseId);
       allow update, delete: if canManageCaseById(resource.data.caseId);
     }
@@ -168,10 +188,12 @@ service cloud.firestore {
     match /clientShares/{shareId} {
       allow create: if canManageCaseById(request.resource.data.caseId);
       allow read: if isAdmin() || (
-        isActiveUser() && (
+        isAuthenticated() && (
           resource.data.clientUid == request.auth.uid ||
-          resource.data.sharedBy == request.auth.uid ||
-          canManageCaseById(resource.data.caseId)
+          (isActiveUser() && (
+            resource.data.sharedBy == request.auth.uid ||
+            canManageCaseById(resource.data.caseId)
+          ))
         )
       );
       allow update, delete: if canManageCaseById(resource.data.caseId);

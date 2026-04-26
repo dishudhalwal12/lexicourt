@@ -355,6 +355,32 @@ Use the `Demo Workspace` path from the landing page or login page.
 - Never push private API keys to GitHub
 - Prefer the demo workspace for presentations if you are unsure whether live Firebase data is ready
 
+## Firebase Deployment
+
+If you are setting up the production environment or updating security rules:
+
+### 1. Install Firebase CLI
+```bash
+npm install -g firebase-tools
+```
+
+### 2. Login to Firebase
+```bash
+firebase login
+```
+
+### 3. Deploy Security Rules and Indexes
+LexiCourt uses specific Firestore rules to ensure lawyer-client data privacy. To deploy these:
+```bash
+firebase deploy --only firestore:rules,storage:rules,firestore:indexes
+```
+
+### 4. Full Deployment (Optional)
+If you want to deploy the entire project (including the web app):
+```bash
+firebase deploy
+```
+
 ## Quick Repeat Checklist
 
 ```bash

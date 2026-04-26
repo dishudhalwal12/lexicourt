@@ -21,7 +21,7 @@
     />
     <link rel="stylesheet" href="css/main.css" />
     <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module" src="js/firebase-config.js?v=fallback-20260426"></script>
     <script type="module">
       import { protectPage } from "./js/auth-guard.js";
       import { initSharedUI } from "./js/page-init.js";
@@ -32,8 +32,8 @@
         saveDraft,
         getCaseIdFromUrl,
         buildCaseUrl
-      } from "./js/firestore-service.js";
-      import { generateDraftFromApi } from "./js/api-client.js";
+      } from "./js/firestore-service.js?v=local-fallback-20260426";
+      import { generateDraftFromApi } from "./js/api-client.js?v=local-fallback-20260426";
       import { downloadTextPdf } from "./js/pdf-export.js";
 
       function escapeHtml(value) {

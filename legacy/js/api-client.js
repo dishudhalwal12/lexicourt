@@ -1,4 +1,36 @@
-const API_BASE = `${window.location.protocol}//${window.location.hostname}:8787/api`;
+const API_HOST = window.location.protocol === "file:" || !window.location.hostname
+  ? "127.0.0.1"
+  : window.location.hostname;
+const API_BASE = `http://${API_HOST}:8787/api`;
+const AI_KEYS_STORAGE_KEY = "lexicourt:gemini-api-keys";
+
+export function getStoredAiApiKeys() {
+  try {
+    const raw = window.localStorage.getItem(AI_KEYS_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    return JSON.parse(raw)
+      .map((key) => String(key || "").trim())
+      .filter(Boolean);
+  } catch (error) {
+    console.warn("Unable to read stored AI API keys:", error);
+    return [];
+  }
+}
+
+export function storeAiApiKeys(keys) {
+  const normalizedKeys = [...new Set(
+    String(keys || "")
+      .split(/\n|,/)
+      .map((key) => key.trim())
+      .filter(Boolean)
+  )];
+
+  window.localStorage.setItem(AI_KEYS_STORAGE_KEY, JSON.stringify(normalizedKeys));
+  return normalizedKeys;
+}
 
 async function safeParseJson(response) {
   const raw = await response.text();
@@ -15,6 +47,10 @@ async function safeParseJson(response) {
 }
 
 async function postJson(path, payload) {
+  const body = {
+    ...(payload || {}),
+    apiKeys: getStoredAiApiKeys()
+  };
   let response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
@@ -22,7 +58,7 @@ async function postJson(path, payload) {
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(body)
     });
   } catch (error) {
     throw new Error("The LexiCourt API is unreachable. Start the local API server and try again.");

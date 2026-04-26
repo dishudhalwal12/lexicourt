@@ -20,17 +20,21 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
     />
     <link rel="stylesheet" href="css/main.css" />
-    <script type="module" src="js/firebase-config.js"></script>
+    <script type="module" src="js/firebase-config.js?v=fallback-20260426"></script>
     <script type="module">
       import { protectPage } from "./js/auth-guard.js";
       import { initSharedUI } from "./js/page-init.js";
       import {
         getClientSharedItems,
+        getCasesForCurrentUser,
         getCaseById,
         getDocumentsByCase,
         getTimelineByCase,
-        formatFirestoreDate
-      } from "./js/firestore-service.js";
+        createDocumentRecord,
+        uploadCaseFileToStorage,
+        formatFirestoreDate,
+        claimCasesForClient
+      } from "./js/firestore-service.js?v=local-fallback-20260426";
 
       function escapeHtml(value) {
         return String(value ?? "")
@@ -102,7 +106,10 @@
                   <div class="list-title">${escapeHtml(doc.displayTitle || doc.fileName || "Untitled document")}</div>
                   <div class="metric-label">${escapeHtml(doc.documentType || "Shared document")}</div>
                 </div>
-                <span class="mini-pill">${escapeHtml(formatFirestoreDate(doc.uploadedAt))}</span>
+                <div class="detail-tabs">
+                  <span class="mini-pill">${escapeHtml(formatFirestoreDate(doc.uploadedAt))}</span>
+                  ${(doc.storageUrl || doc.externalUrl) ? `<a class="text-link" href="${escapeHtml(doc.storageUrl || doc.externalUrl)}" target="_blank" rel="noreferrer">Open</a>` : ""}
+                </div>
               </div>
             `
           )
@@ -148,42 +155,125 @@
         initSharedUI();
 
         try {
-          const shares = await getClientSharedItems(user.uid);
-          const activeShare = shares[0];
+          // Trigger the 'Real Sync' by claiming any cases assigned to this email
+          await claimCasesForClient(user);
 
-          if (!activeShare) {
+          const shares = await getClientSharedItems(user.uid);
+          const caseSelect = document.getElementById("clientCaseSelect");
+
+          if (!shares.length) {
             renderEmptyClientState();
             return;
           }
 
-          const activeCase = await getCaseById(activeShare.caseId);
-          const documents = await getDocumentsByCase(activeShare.caseId);
-          const timelines = await getTimelineByCase(activeShare.caseId);
+          const sharedCases = [];
+          for (const share of shares) {
+            const caseRecord = await getCaseById(share.caseId);
+            if (caseRecord) {
+              sharedCases.push({ share, caseRecord });
+            }
+          }
+          
+          let activeShare = sharedCases[0]?.share;
 
-          const sharedDocuments = Array.isArray(activeShare.sharedDocumentIds) && activeShare.sharedDocumentIds.length
-            ? documents.filter((doc) => activeShare.sharedDocumentIds.includes(doc.id))
-            : [];
+          if (caseSelect) {
+            caseSelect.innerHTML = sharedCases
+              .map(({ share, caseRecord }) => `<option value="${share.caseId}">${escapeHtml(caseRecord.caseNumber || share.caseId)} • ${escapeHtml(caseRecord.caseTitle || "Shared matter")}</option>`)
+              .join("");
+          }
 
-          const sharedTimelines = Array.isArray(activeShare.sharedTimelineIds) && activeShare.sharedTimelineIds.length
-            ? timelines.filter((timeline) => activeShare.sharedTimelineIds.includes(timeline.id))
-            : [];
+          async function loadClientCase(caseId) {
+            activeShare = sharedCases.find((item) => item.share.caseId === caseId)?.share || sharedCases[0]?.share;
+            const activeCase = await getCaseById(activeShare.caseId);
+            const documents = await getDocumentsByCase(activeShare.caseId);
+            const timelines = await getTimelineByCase(activeShare.caseId);
 
-          const timelineEvents = sharedTimelines.flatMap((timeline) =>
-            (timeline.events || []).map((eventItem) => ({
-              date: eventItem.date || formatFirestoreDate(timeline.generatedAt),
-              title: eventItem.title || "Timeline Event",
-              description: eventItem.description || "No description provided."
-            }))
-          );
-          document.getElementById("clientCaseTitle").textContent = activeCase?.caseTitle || "Shared matter";
-          document.getElementById("clientCaseStatus").innerHTML = renderStatusBadge(activeCase?.status);
-          document.getElementById("clientNextHearing").textContent = `Next Hearing • ${formatFirestoreDate(activeCase?.nextHearingDate, "Not scheduled")}`;
-          document.getElementById("clientCaseSummary").textContent =
-            activeCase?.notes ||
-            `${activeCase?.caseTitle || "This matter"} has been shared with you for document and hearing visibility.`;
+            const sharedDocuments = Array.isArray(activeShare.sharedDocumentIds) && activeShare.sharedDocumentIds.length
+              ? documents.filter((doc) => activeShare.sharedDocumentIds.includes(doc.id))
+              : documents;
 
-          renderClientDocuments(sharedDocuments);
-          renderClientTimeline(timelineEvents);
+            const sharedTimelines = Array.isArray(activeShare.sharedTimelineIds) && activeShare.sharedTimelineIds.length
+              ? timelines.filter((timeline) => activeShare.sharedTimelineIds.includes(timeline.id))
+              : timelines;
+
+            const timelineEvents = sharedTimelines.flatMap((timeline) =>
+              (timeline.events || []).map((eventItem) => ({
+                date: eventItem.date || formatFirestoreDate(timeline.generatedAt),
+                title: eventItem.title || "Timeline Event",
+                description: eventItem.description || "No description provided."
+              }))
+            );
+            document.getElementById("clientCaseTitle").textContent = activeCase?.caseTitle || "Shared matter";
+            document.getElementById("clientCaseStatus").innerHTML = renderStatusBadge(activeCase?.status);
+            document.getElementById("clientNextHearing").textContent = `Next Hearing • ${formatFirestoreDate(activeCase?.nextHearingDate, "Not scheduled")}`;
+            document.getElementById("clientCaseSummary").textContent =
+              activeCase?.notes ||
+              `${activeCase?.caseTitle || "This matter"} has been shared with you for document and hearing visibility.`;
+
+            renderClientDocuments(sharedDocuments);
+            renderClientTimeline(timelineEvents);
+          }
+
+          caseSelect?.addEventListener("change", () => {
+            loadClientCase(caseSelect.value).catch((error) => {
+              console.error(error);
+              window.lexiCourtUtils?.notify?.("Unable to load the selected shared matter.", "error");
+            });
+          });
+
+          document.getElementById("clientUploadBtn")?.addEventListener("click", () => {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById("clientDocumentModal")).show();
+          });
+
+          const uploadForm = document.getElementById("clientDocumentForm");
+          uploadForm?.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            const submit = document.getElementById("clientDocumentSubmit");
+            const file = document.getElementById("clientUploadedFile")?.files?.[0] || null;
+            const formData = new FormData(uploadForm);
+
+            if (!activeShare?.caseId) {
+              return;
+            }
+
+            submit.disabled = true;
+            submit.textContent = file ? "Uploading..." : "Saving...";
+
+            try {
+              let uploadResponse = {};
+              if (file) {
+                uploadResponse = await uploadCaseFileToStorage(activeShare.caseId, file);
+              }
+
+              await createDocumentRecord({
+                caseId: activeShare.caseId,
+                fileName: uploadResponse.fileName || file?.name || String(formData.get("displayTitle") || "Client document"),
+                displayTitle: String(formData.get("displayTitle") || file?.name || "Client document").trim(),
+                documentType: String(formData.get("documentType") || "Client uploaded document").trim(),
+                mimeType: uploadResponse.mimeType || file?.type || "text/plain",
+                fileSize: Math.round((uploadResponse.fileSize || file?.size || 0) / 1024),
+                storagePath: uploadResponse.storagePath || "",
+                storageUrl: uploadResponse.downloadURL || "",
+                rawTextContent: String(formData.get("rawTextContent") || "").trim(),
+                extractedText: String(formData.get("rawTextContent") || "").trim(),
+                notes: String(formData.get("documentNotes") || "").trim(),
+                visibility: "lawyer-client"
+              });
+
+              bootstrap.Modal.getInstance(document.getElementById("clientDocumentModal"))?.hide();
+              uploadForm.reset();
+              await loadClientCase(activeShare.caseId);
+              window.lexiCourtUtils?.notify?.("Document uploaded to the shared case file.", "success");
+            } catch (error) {
+              console.error(error);
+              window.lexiCourtUtils?.notify?.(error.message || "Unable to upload the document.", "error");
+            } finally {
+              submit.disabled = false;
+              submit.textContent = "Upload Document";
+            }
+          });
+
+          await loadClientCase(activeShare.caseId);
         } catch (error) {
           console.error(error);
           renderEmptyClientState();
@@ -231,6 +321,10 @@
             View your current matter status, upcoming hearing dates, and documents shared by counsel.
           </p>
         </div>
+        <div style="min-width: 320px;">
+          <label class="section-label" for="clientCaseSelect">Shared Case</label>
+          <select id="clientCaseSelect" class="app-select"></select>
+        </div>
       </section>
 
       <section class="client-grid">
@@ -257,6 +351,7 @@
               <span class="card-icon"><i class="bi bi-folder-check"></i></span>
               <h2 class="card-title">Shared Documents</h2>
             </div>
+            <button id="clientUploadBtn" class="btn-accent" type="button">Upload</button>
           </div>
           <div id="clientDocsList" class="doc-list"></div>
         </article>
@@ -272,6 +367,50 @@
         <div class="timeline-wrap" id="clientTimeline"></div>
       </section>
     </main>
+
+    <div class="modal fade document-record-modal" id="clientDocumentModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content document-modal-content">
+          <div class="modal-header document-modal-header">
+            <div>
+              <span class="document-modal-kicker">Client Upload</span>
+              <h2 class="card-title mb-0">Upload Case Document</h2>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <form id="clientDocumentForm" class="document-modal-form">
+            <div class="modal-body">
+              <div class="form-grid">
+                <div>
+                  <label class="section-label" for="clientDisplayTitle">Display Title</label>
+                  <input class="app-input" id="clientDisplayTitle" name="displayTitle" type="text" placeholder="Payment receipt, notice copy, order" required />
+                </div>
+                <div>
+                  <label class="section-label" for="clientDocumentType">Document Type</label>
+                  <input class="app-input" id="clientDocumentType" name="documentType" type="text" placeholder="Receipt, Notice, Evidence" />
+                </div>
+                <div style="grid-column: 1 / -1;">
+                  <label class="section-label" for="clientUploadedFile">Upload File</label>
+                  <input class="app-input" id="clientUploadedFile" name="uploadedFile" type="file" />
+                </div>
+                <div style="grid-column: 1 / -1;">
+                  <label class="section-label" for="clientRawTextContent">Document Text</label>
+                  <textarea class="app-textarea" id="clientRawTextContent" name="rawTextContent" placeholder="Paste important text from the document if available."></textarea>
+                </div>
+                <div style="grid-column: 1 / -1;">
+                  <label class="section-label" for="clientDocumentNotes">Notes</label>
+                  <textarea class="app-textarea" id="clientDocumentNotes" name="documentNotes" placeholder="Add short context for your lawyer."></textarea>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer document-modal-footer">
+              <button class="btn-dark" type="button" data-bs-dismiss="modal">Cancel</button>
+              <button id="clientDocumentSubmit" class="btn-accent" type="submit">Upload Document</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="js/data.js"></script>

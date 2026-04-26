@@ -87,10 +87,12 @@ export async function GET(
     const extension = path.extname(filePath).toLowerCase();
     const contentType = CONTENT_TYPES[extension] || "application/octet-stream";
 
+    const shouldAvoidCache = [".html", ".js", ".mjs"].includes(extension);
+
     return new Response(file, {
       headers: {
         "Content-Type": contentType,
-        "Cache-Control": extension === ".html" ? "no-store" : "public, max-age=3600"
+        "Cache-Control": shouldAvoidCache ? "no-store, max-age=0" : "public, max-age=3600"
       }
     });
   } catch {
