@@ -11,6 +11,104 @@ let topbarChromeBound = false;
 let topbarCleanup = null;
 let storyMotionCleanup = null;
 let authSyncCleanup = null;
+let themeToggleCleanup = null;
+
+const THEME_STORAGE_KEY = "lexicourt-theme";
+
+function getStoredTheme() {
+    try {
+        return window.localStorage.getItem(THEME_STORAGE_KEY) === "light" ? "light" : "dark";
+    } catch (error) {
+        return "dark";
+    }
+}
+
+function applyTheme(theme) {
+    const nextTheme = theme === "light" ? "light" : "dark";
+    document.documentElement.dataset.theme = nextTheme;
+    document.documentElement.style.colorScheme = nextTheme === "light" ? "light" : "dark";
+
+    const syncBodyTheme = () => {
+        document.body?.setAttribute("data-theme", nextTheme);
+    };
+    syncBodyTheme();
+    if (!document.body) {
+        document.addEventListener("DOMContentLoaded", syncBodyTheme, { once: true });
+    }
+
+    try {
+        window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+        document.cookie = `${THEME_STORAGE_KEY}=${nextTheme}; path=/; max-age=31536000; SameSite=Lax`;
+    } catch (error) {
+        console.warn("Unable to persist theme preference:", error);
+    }
+
+    document.querySelectorAll("[data-theme-toggle]").forEach((button) => {
+        const icon = button.querySelector("[data-theme-icon]");
+        const label = button.querySelector("[data-theme-label]");
+        const isLight = nextTheme === "light";
+
+        button.setAttribute("aria-pressed", String(isLight));
+        button.setAttribute("aria-label", isLight ? "Switch to dark mode" : "Switch to light mode");
+        button.title = isLight ? "Switch to dark mode" : "Switch to light mode";
+
+        if (icon) {
+            icon.className = `bi ${isLight ? "bi-moon-stars-fill" : "bi-brightness-high-fill"}`;
+        }
+
+        if (label) {
+            label.textContent = isLight ? "Dark mode" : "Light mode";
+        }
+    });
+}
+
+function createThemeToggleButton() {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "theme-toggle-btn";
+    button.setAttribute("data-theme-toggle", "true");
+    button.innerHTML = `
+      <i class="bi bi-brightness-high-fill" data-theme-icon="true" aria-hidden="true"></i>
+      <span data-theme-label="true">Light mode</span>
+    `;
+    button.addEventListener("click", () => {
+        const nextTheme = document.body?.getAttribute("data-theme") === "light" ? "dark" : "light";
+        applyTheme(nextTheme);
+    });
+    return button;
+}
+
+function initThemeToggle() {
+    const topbar = document.querySelector(".topbar");
+    const navActions = topbar?.querySelector(".nav-actions");
+    if (!topbar || !navActions) {
+        themeToggleCleanup?.();
+        themeToggleCleanup = null;
+        return;
+    }
+
+    const ensureToggle = () => {
+        let button = navActions.querySelector("[data-theme-toggle]");
+        if (!button) {
+            button = createThemeToggleButton();
+            navActions.prepend(button);
+        }
+        applyTheme(document.body?.getAttribute("data-theme") || getStoredTheme());
+    };
+
+    ensureToggle();
+
+    themeToggleCleanup?.();
+    const observer = new MutationObserver(() => {
+        ensureToggle();
+    });
+    observer.observe(navActions, { childList: true });
+
+    themeToggleCleanup = () => {
+        observer.disconnect();
+        themeToggleCleanup = null;
+    };
+}
 
 function escapeHtml(value) {
     return String(value ?? "")
@@ -262,6 +360,7 @@ function initNotificationCenter(profile) {
 
 export function initTopbarChrome() {
     initStoryMotion();
+    applyTheme(document.body?.getAttribute("data-theme") || getStoredTheme());
 
     const topbar = document.querySelector(".topbar");
     if (!topbar) {
@@ -295,12 +394,14 @@ export function initTopbarChrome() {
     };
 
     syncTopbarState();
+    initThemeToggle();
     window.addEventListener("scroll", requestSync, { passive: true });
     window.addEventListener("resize", requestSync);
 
     topbarCleanup = () => {
         window.removeEventListener("scroll", requestSync);
         window.removeEventListener("resize", requestSync);
+        themeToggleCleanup?.();
         topbar.classList.remove("is-condensed", "is-hidden");
         document.body.classList.remove("nav-is-condensed", "nav-is-hidden");
         topbarCleanup = null;
@@ -425,7 +526,7 @@ export function initSharedUI() {
             const profile = await getCurrentUserProfile(user.uid);
             const userNameEl = document.getElementById("navUserName");
             const roleEl = document.getElementById("navUserRole");
-            
+
             if (userNameEl) {
                 userNameEl.textContent = profile?.fullName || user.displayName || user.email || "LexiCourt User";
             }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 declare global {
   interface Window {
@@ -41,13 +41,29 @@ async function ensureRuntimeDependencies() {
 
 function setBodyAttributesFromDocument(doc: Document) {
   const body = doc.body;
+  const activeTheme = document.documentElement.dataset.theme || "dark";
   document.body.className = body.className;
+  document.body.setAttribute("data-theme", activeTheme);
 
   const dataPage = body.getAttribute("data-page");
   if (dataPage) {
     document.body.setAttribute("data-page", dataPage);
   } else {
     document.body.removeAttribute("data-page");
+  }
+}
+
+function syncStoredTheme() {
+  try {
+    const theme = window.localStorage.getItem("lexicourt-theme") === "light" ? "light" : "dark";
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme === "light" ? "light" : "dark";
+    document.body?.setAttribute("data-theme", theme);
+    document.cookie = `lexicourt-theme=${theme}; path=/; max-age=31536000; SameSite=Lax`;
+  } catch (error) {
+    document.documentElement.dataset.theme = "dark";
+    document.documentElement.style.colorScheme = "dark";
+    document.body?.setAttribute("data-theme", "dark");
   }
 }
 
@@ -93,6 +109,10 @@ export function LegacyPageMount({ htmlFile }: LegacyPageMountProps) {
   useEffect(() => {
     setHasMounted(true);
   }, []);
+
+  useLayoutEffect(() => {
+    syncStoredTheme();
+  }, [htmlFile]);
 
   useEffect(() => {
     if (!hasMounted) {

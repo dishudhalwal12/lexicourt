@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import Script from "next/script";
 import "bootstrap/dist/css/bootstrap.min.css";
 import "bootstrap-icons/font/bootstrap-icons.css";
@@ -81,6 +82,30 @@ const rootHydrationGuardScript = `
   })();
 `;
 
+const themeBootScript = `
+  (() => {
+    const applyTheme = () => {
+      const theme = document.documentElement.dataset.theme || "dark";
+      document.body?.setAttribute("data-theme", theme);
+    };
+
+    try {
+      const savedTheme = window.localStorage.getItem("lexicourt-theme");
+      const theme = savedTheme === "light" ? "light" : "dark";
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.colorScheme = theme === "light" ? "light" : "dark";
+    } catch (error) {
+      document.documentElement.dataset.theme = "dark";
+      document.documentElement.style.colorScheme = "dark";
+    }
+
+    applyTheme();
+    if (!document.body) {
+      document.addEventListener("DOMContentLoaded", applyTheme, { once: true });
+    }
+  })();
+`;
+
 export const metadata: Metadata = {
   title: "LexiCourt",
   description: "AI-powered legal assistant and virtual court case management system",
@@ -91,19 +116,24 @@ export const metadata: Metadata = {
   }
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const cookieStore = await cookies();
+  const themeCookie = cookieStore.get("lexicourt-theme")?.value;
+  const initialTheme = themeCookie === "light" ? "light" : "dark";
+
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" data-theme={initialTheme} style={{ colorScheme: initialTheme }} suppressHydrationWarning>
       <head>
+        <script id="theme-boot-inline" dangerouslySetInnerHTML={{ __html: themeBootScript }} />
         <Script id="root-hydration-guard" strategy="beforeInteractive">
           {rootHydrationGuardScript}
         </Script>
       </head>
-      <body suppressHydrationWarning>{children}</body>
+      <body data-theme={initialTheme} suppressHydrationWarning>{children}</body>
     </html>
   );
 }
